@@ -15,8 +15,9 @@ from PyQt6.QtWidgets import (
     QPushButton, QButtonGroup,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
-ICONS = ROOT / "data" / "icons"
+from paths import resource_dir
+
+ICONS = resource_dir("data/icons")
 
 POSITIONS = ["1", "2", "3", "4", "5"]
 POS_TO_ROLE = {

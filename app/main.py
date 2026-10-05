@@ -15,6 +15,7 @@ from gsi_server import start_gsi_thread          # noqa: E402
 from draft_watcher import DraftWatcher           # noqa: E402
 from recommender import Recommender              # noqa: E402
 from overlay import run_overlay                  # noqa: E402
+from paths import resource                       # noqa: E402
 
 try:
     import keyboard  # global hotkeys (Windows)
@@ -23,7 +24,7 @@ except ImportError:
 
 
 def main():
-    cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    cfg = json.loads(resource("config.json").read_text(encoding="utf-8"))
     rec = Recommender(my_bracket=cfg.get("mmr_bracket"))
 
     app, ov = run_overlay(cfg)

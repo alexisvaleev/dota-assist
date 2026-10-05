@@ -10,8 +10,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
-ICONS = ROOT / "data" / "icons"
+from paths import resource_dir, resource
+
+ICONS = resource_dir("data/icons")
 
 ROLE_NAMES = ["carry", "mid", "offlane", "soft_support", "hard_support"]
 
@@ -73,5 +74,5 @@ class Recognizer:
 
 
 def load_calibration() -> dict:
-    p = ROOT / "app" / "calibration.json"
+    p = resource("app/calibration.json")
     return json.loads(p.read_text(encoding="utf-8"))

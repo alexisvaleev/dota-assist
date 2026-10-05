@@ -10,8 +10,9 @@ Item phase: core build + situational rules triggered by enemy composition.
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+from paths import resource_dir
+
+DATA = resource_dir("data")
 
 # lane opponent: my role -> enemy roles that laned against me
 LANE_OPPONENT = {
