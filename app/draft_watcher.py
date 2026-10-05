@@ -86,10 +86,13 @@ class DraftWatcher(threading.Thread):
 
         my_role = next((r for r in a_roles if r), None)
 
+        # keep pick<->role alignment: drop empty slots as pairs
+        enemy_pairs = [(h, r) for h, r in zip(e_heroes, e_roles) if h]
+
         new = {
-            "enemy_picks": [h for h in e_heroes if h],
+            "enemy_picks": [h for h, _ in enemy_pairs],
             "ally_picks": [h for h in a_heroes if h],
-            "enemy_roles": e_roles,
+            "enemy_roles": [r for _, r in enemy_pairs],
             "my_role": my_role,
             "unknown_slots": e_unk,
         }

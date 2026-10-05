@@ -96,7 +96,11 @@ def main():
         watcher.set_side(side)
         if st.team and manual_side[0] is None:
             ov.bus.side_detected.emit(st.team)
-        watcher.enabled = st.in_draft
+        # CV only where GSI is silent: in CM/lobby picks arrive via GSI
+        # draft.teamN blocks — skip screen scraping there; in AP the draft
+        # block is absent/stripped so CV stays on
+        gsi_draft = bool(st.draft.get("team2") or st.draft.get("team3"))
+        watcher.enabled = st.in_draft and not gsi_draft
 
         # CM/lobby drafts come through GSI directly — feed the same pipeline
         if st.in_draft and st.draft:
