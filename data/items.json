@@ -1,0 +1,22 @@
+{
+  "_comment": "Билды по героям + ситуативные правила. heroes.<id>.core — базовый билд; rules — срабатывают при вражеских героях (short_name, lowercase). prices — для фильтра по золоту. Дополняй под свою мету; STRATZ-выгрузка items_stratz_raw.json поможет.",
+  "heroes": {},
+  "rules": [
+    {"if_enemy": ["pudge"], "suggest": ["lotus_orb"]},
+    {"if_enemy": ["undying", "necrolyte", "huskar", "alchemist", "dawnbreaker"], "suggest": ["spirit_vessel", "skadi", "shiva"]},
+    {"if_enemy": ["riki", "bounty_hunter", "clinkz", "nyx_assassin", "templar_assassin"], "suggest": ["gem", "dust"]},
+    {"if_enemy": ["storm_spirit", "void_spirit", "ember_spirit", "puck", "queenofpain"], "suggest": ["orchid", "bloodthorn", "nullifier"]},
+    {"if_enemy": ["phantom_assassin", "troll_warlord", "ursa", "windrunner"], "suggest": ["ghost_scepter", "halberd", "butterfly"]},
+    {"if_enemy": ["lina", "zeus", "skywrath_mage", "lion", "witch_doctor"], "suggest": ["pipe", "bkb", "hood_of_defiance"]},
+    {"if_enemy": ["crystal_maiden", "lich", "enigma", "warlock"], "suggest": ["bkb"]},
+    {"if_enemy": ["slark", "pudge", "spirit_breaker"], "suggest": ["aeon_disk", "force_staff"]},
+    {"if_enemy": ["medusa", "terrorblade", "luna", "gyrocopter"], "suggest": ["manta", "crimson_guard"]}
+  ],
+  "prices": {
+    "lotus_orb": 3850, "spirit_vessel": 2980, "skadi": 5300, "shiva": 4850,
+    "gem": 900, "dust": 80, "orchid": 3475, "bloodthorn": 6800,
+    "nullifier": 4375, "ghost_scepter": 1500, "halberd": 3550,
+    "butterfly": 4975, "pipe": 3475, "bkb": 4050, "hood_of_defiance": 1475,
+    "aeon_disk": 3000, "force_staff": 2200, "manta": 4600, "crimson_guard": 3600
+  }
+}

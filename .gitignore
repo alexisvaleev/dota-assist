@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+
+# Secrets — never commit
+config.json
+
+# Downloaded data (regenerate via scripts/) — items.json is curated, keep it
+data/heroes.json
+data/meta.json
+data/matchups.json
+data/builds.json
+data/items_stratz_raw.json
+data/icons/
+draft_screen.png

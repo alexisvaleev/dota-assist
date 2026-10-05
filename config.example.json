@@ -1,0 +1,14 @@
+{
+  "stratz_token": "",
+  "gsi_port": 3000,
+  "gsi_auth_token": "dotaassist123",
+  "capture_interval_ms": 500,
+  "overlay": {
+    "x": 20,
+    "y": 200,
+    "width": 320,
+    "opacity": 0.85
+  },
+  "dota_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\dota 2 beta",
+  "language": "ru"
+}
