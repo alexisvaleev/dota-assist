@@ -1,107 +1,103 @@
 # Dota Assist
 
-Личный оверлей для Ranked All Pick: рекомендации пиков по фазам драфта
-+ предметы в игре. Read-only: скриншоты экрана + официальный GSI.
-Никакого чтения памяти, инъекций или модификации игры.
+[![ci](https://github.com/alexisvaleev/dota-assist/actions/workflows/ci.yml/badge.svg)](https://github.com/alexisvaleev/dota-assist/actions/workflows/ci.yml)
+[![release](https://github.com/alexisvaleev/dota-assist/actions/workflows/release.yml/badge.svg)](https://github.com/alexisvaleev/dota-assist/actions/workflows/release.yml)
 
-## Установка (Windows, plug&play)
+Личный оверлей для **Dota 2 Ranked All Pick**: подсказывает пики по фазам
+драфта и предметы в игре. Read-only: скриншоты экрана (CV) + официальный
+Game State Integration. Никакого чтения памяти, инъекций или модификации
+игры.
 
-**Готовый вариант:** релиз → `DotaAssist-Setup.exe` → установить →
-запустить. При первом старте приложение само скачает данные OpenDota и
-иконки героев в `%APPDATA%\DotaAssist\` — ждать ~5–10 мин один раз.
+## Что делает
 
-**Из исходников:**
+- **Драфт**: фаза раунда, раскрытые враги и баны, топ-5 кандидатов с
+  разбивкой «почему» (мета / контрпик / синергия / твой пул).
+- **Игра**: предметы по таймингам OpenDota + ситуативные правила;
+  купленное исключается, недоступное помечается.
+- **Оверлей**: полупрозрачный, всегда поверх, click-through по умолчанию.
+  `Ctrl+Shift+D` — интерактивный режим (сторона, позиция 1–5, drag).
 
-```bat
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy config.example.json config.json   :: stratz_token / account_id (опц.)
-python scripts\setup.py
-python app\main.py
-```
+## Установка (plug&play)
 
-`setup.py`: кладёт GSI-cfg в папку Dota, качает `data/*.json` в
-`%APPDATA%\DotaAssist\data`, иконки — со Steam CDN (VPK-экстрактор для
-вариантов аркан опционален).
-`config.json` не коммитится (в .gitignore), в exe не зашивается.
+1. Скачай **`DotaAssist-Setup.exe`** из
+   [Releases](https://github.com/alexisvaleev/dota-assist/releases) →
+   установи → запусти.
+2. Первый старт сам качает данные и иконки в `%APPDATA%\DotaAssist`
+   (~5–10 мин, один раз).
+3. В Dota: параметры запуска `-gamestateintegration`, режим окна
+   **Borderless Windowed** (в exclusive fullscreen оверлей не виден).
+4. Один раз откалибруй слоты драфта (см. ниже).
 
-**Вручную один раз:**
+### Калибровка
 
-1. `-gamestateintegration` в параметры запуска Dota.
-2. **Borderless Windowed** — в exclusive fullscreen оверлей не виден.
-3. **Калибровка** `app/calibration.json`: на открытом экране драфта
-   `python scripts\screenshot_for_calib.py` → по `draft_screen.png`
-   замерить слоты `[x,y,w,h]` (team_left, team_right, bans),
-   выставить `monitor` и `resolution`.
-4. Арканы/персоны врагов: `Source2Viewer-CLI`, путь в
-   `config.json -> vrf_cli`, затем `python scripts\extract_icons.py`.
-
-## Релиз (CI)
+Слоты портретов — это прямоугольники `[x,y,w,h]` в
+`app\calibration.json` рядом с exe (переопределяет встроенную) или в
+`%APPDATA%\DotaAssist\app\calibration.json`:
 
 ```bat
-git tag v0.2.0 && git push --tags
+:: на открытом экране драфта (лобби/демо):
+python scripts\screenshot_for_calib.py   :: -> draft_screen.png
+:: в Paint замерь 5 слотов каждой команды + ряд банов,
+:: впиши в calibration.json, выстави monitor и resolution
+python scripts\test_recognizer.py draft_screen.png -v  :: проверка точности
 ```
 
-GitHub Actions соберёт `DotaAssist.exe` и `DotaAssist-Setup.exe` и
-выложит их в Release.
+Координаты масштабируются автоматически при другом разрешении.
 
-- До матча — заглушка. В драфте — фаза, враги, баны, топ пиков с
-  разбивкой (контр/синергия/пул/мета). В игре — предметы.
-- **Ctrl+Shift+D** — переключить click-through ⇄ интерактивный режим
-  (кнопки Radiant/Dire и позиции 1–5, перетаскивание).
+## Как считаются рекомендации
 
-## Как считается
-
-- Фаза 1 (до раскрытия) — чистая мета + личный пул.
-- Фазы 2–3 — + матчапы против раскрытых врагов (сжатие по числу игр:
-  4 победы из 4 ≠ +50), вес выше против вероятного лайн-оппонента
-  (по positions.json), плюс синергия с союзниками.
-- Кандидаты фильтруются по позиции (если выбрана и есть данные),
-  забаненные и уже пикнутые исключаются.
-- Предметы: тайминги OpenDota (секунды→окно [−5м, +10м]) + ситуативные
-  правила `data/items.json`; купленное исключается, дорогое помечается.
-- При плохом распознавании оверлей показывает предупреждение, а не
-  делает вид, что всё точно.
+- **Фаза 1** (до раскрытия врагов) — мета патча + твой личный пул.
+- **Фазы 2–3** — матчапы против раскрытых врагов со сжатием по числу игр
+  (4 победы из 4 ≠ +50), вес выше против вероятного лайн-оппонента,
+  плюс синергия с союзниками.
+- Фильтры: позиция (кнопки 1–5), баны, уже пикнутые.
+- При низкой уверенности CV показывается предупреждение — тул не делает
+  вид, что всё точно.
 
 ## Данные
 
-- Основной источник — **OpenDota** (без ключа). **STRATZ** — опционально:
-  точнее матчапы и синергии с разбивкой по брекету (`stratz_token`).
-- Кэш — `%APPDATA%\DotaAssist\data` (в dev — `data/` репо). Пишется
-  атомарно; при сбое API остаётся старый кэш.
-- `account_id` в конфиге → личная статистика героев (бонус «своего пула»).
-- Иконки героев — ассеты Valve, живут только в `%APPDATA%` и не
-  распространяются.
+- **OpenDota** — основной источник (без ключа). **STRATZ** — опционально
+  (точнее матчапы/синергии по брекету; `stratz_token` в `config.json`).
+- Кэш — `%APPDATA%\DotaAssist\data`, пишется атомарно: при сбое API
+  остаётся предыдущий рабочий набор.
+- `account_id` → личная статистика героев (бонус «своего пула»).
+- Иконки героев — ассеты Valve; качаются со Steam CDN локально, в
+  релиз/репозиторий не входят.
 
-## Spike перед обкаткой (Windows)
+## Для разработки
 
-1. `python scripts\gsi_dump.py` — пишет GSI-пакеты в `gsi_dumps/`;
-   проверить, что приходит во время рейтингового драфта.
-2. `python scripts\test_recognizer.py draft_screen.png -v` — точность
-   CV на реальном скриншоте.
+```bat
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+copy config.example.json config.json
+python scripts\setup.py        :: GSI-cfg + данные + иконки
+python app\main.py
+```
+
+Тесты: `.venv\Scripts\python -m unittest discover -s tests -v`
+
+Релиз: `git tag v0.x.y && git push --tags` — CI соберёт exe + установщик.
+
+| Папка | Содержимое |
+|---|---|
+| `app/engine/` | чистое ядро: DraftState, скоринг, предметы (без Qt/CV) |
+| `app/` | `gsi_server` (Flask), `draft_watcher` (mss), `recognizer` (OpenCV), `overlay` (PyQt6), `bootstrap` (автозагрузка данных) |
+| `scripts/` | dev-обёртки: fetch_data, fetch_icons_cdn, extract_icons, gsi_dump, setup, build |
+| `docs/findings.md` | чеклист spike-проверок на Windows |
+
+## Spike перед обкаткой
+
+1. `python scripts\gsi_dump.py` — что реально приходит в GSI на драфте.
+2. `test_recognizer.py` на скриншоте — точность CV.
 3. Заполнить `docs/findings.md`.
-
-## Тесты
-
-```bat
-.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-## Сборка .exe
-
-```bat
-pip install pyinstaller
-python scripts\build.py        :: dist\DotaAssist.exe
-python scripts\build_release.py :: + Inno Setup установщик
-```
-
-После установки запусти `python scripts\first_run.py` — скачает данные
-и иконки в `%APPDATA%`.
 
 ## Ограничения
 
-- Портрет не распознан (новая аркана) — слот «?» и пониженный confidence.
-  Перезапусти `extract_icons.py` после патчей.
+- Портрет не распознан (новая аркана/персона) → слот «?» и предупреждение.
 - CV ломается от смены разрешения/масштаба UI — перекалибруй.
-- Имена героев в оверлее — английские (`localized_name` из OpenDota).
+- Имена героев — английские (`localized_name` из OpenDota).
+- Тул избегает известных инвазивных техник, но гарантий от Valve нет.
+
+## Лицензия
+
+MIT. Не для коммерческого использования — личный инструмент.
