@@ -1,8 +1,10 @@
-"""Entry point: wires GSI server + draft watcher + overlay together.
+"""Точка входа: GSI + CV watcher + оверлей.
 
-Modes switch automatically on GSI game_state:
-  draft phases  -> draft_watcher active, overlay shows pick suggestions
-  in game       -> watcher idle, overlay shows item recommendations
+Потоки данных:
+  draft: CV watcher (или GSI draft в CM/лобби) -> DraftState -> engine
+         -> оверлей (топ пиков с разбивкой «почему»)
+  game:  GSI -> hero/инвентарь/золото/время + сохранённые пики драфта
+         -> engine -> оверлей (предметы)
 """
 import json
 import sys
@@ -11,154 +13,195 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 
-from gsi_server import start_gsi_thread          # noqa: E402
-from draft_watcher import DraftWatcher           # noqa: E402
-from recommender import Recommender              # noqa: E402
-from overlay import run_overlay                  # noqa: E402
-from paths import resource                       # noqa: E402
+from gsi_server import start_gsi_thread            # noqa: E402
+from draft_watcher import DraftWatcher             # noqa: E402
+from overlay import run_overlay                    # noqa: E402
+from paths import layered_file, layered_dir, user_dir, config_file  # noqa: E402
+from engine import load_data, DraftState, recommend_picks, recommend_items  # noqa: E402
 
 try:
-    import keyboard  # global hotkeys (Windows)
+    import keyboard  # глобальные хоткеи (Windows)
 except ImportError:
     keyboard = None
 
 
-def main():
-    cfg = json.loads(resource("config.json").read_text(encoding="utf-8"))
-    rec = Recommender(my_bracket=cfg.get("mmr_bracket"))
+def load_config() -> dict:
+    p = config_file()
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[config] {p}: {e} — беру дефолт")
+    ex = layered_file("config.example.json")
+    if ex.exists():
+        cfg = json.loads(ex.read_text(encoding="utf-8"))
+        if str(p).startswith(str(user_dir())):
+            p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+            print(f"[config] создан {p} — впиши stratz_token при желании")
+        return cfg
+    return {"gsi_port": 3000, "gsi_auth_token": ""}
 
-    app, ov = run_overlay(cfg)
-    gsi = start_gsi_thread(cfg["gsi_port"], cfg["gsi_auth_token"])
 
-    def display_name(hid_or_short):
-        hid = hid_or_short if isinstance(hid_or_short, int) \
-            else rec.hero_id(hid_or_short)
-        h = rec.heroes.get(str(hid)) if hid else None
-        return h["localized_name"] if h else str(hid_or_short)
+class Coordinator:
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self.gd = load_data(data_dir=layered_dir("data"),
+                            user_dir=user_dir() / "data")
+        self.name2id = {
+            v.get("name", "").replace("npc_dota_hero_", ""): hid
+            for hid, v in self.gd.heroes.items()
+        }
+        self.manual_pos: int | None = None   # 1..5 с кнопок
+        self.manual_side: str | None = None
+        self.last_draft_ids = {"enemy": [], "ally": []}
+        self.last_draft_state: dict | None = None
+        self._items_key = None
 
-    manual_role = [None]     # set via overlay position buttons
-    manual_side = [None]     # set via overlay side button
+    # ---------- helpers ----------
 
-    def on_picks(st: dict):
-        enemy_ids = [rec.hero_id(n) for n in st["enemy_picks"]]
-        enemy_ids = [i for i in enemy_ids if i]
-        ally_ids = [rec.hero_id(n) for n in st["ally_picks"]]
-        ally_ids = [i for i in ally_ids if i]
-        top = rec.recommend_picks(
-            enemy_ids=enemy_ids, ally_ids=ally_ids, banned_ids=[],
-            my_role=manual_role[0] or st.get("my_role"),
-            enemy_roles=st.get("enemy_roles", []),
+    def hid(self, short: str) -> int | None:
+        return self.name2id.get(short)
+
+    def hero_disp(self, hid: int) -> str:
+        return self.gd.hero_name(hid)
+
+    def icon_dir(self, hid: int) -> str:
+        return self.gd.short_name(hid)
+
+    # ---------- draft ----------
+
+    def on_draft(self, st: dict):
+        """st: снимок от watcher'а (имена) или от GSI draft (id через
+        draft_picks — уже конвертированы в имена перед вызовом)."""
+        self.last_draft_state = st
+        enemy_ids = [i for i in (self.hid(n) for n in st["enemy_picks"]) if i]
+        ally_ids = [i for i in (self.hid(n) for n in st["ally_picks"]) if i]
+        banned = [i for i in (self.hid(n) for n in st.get("bans", [])) if i]
+        self.last_draft_ids = {"enemy": enemy_ids, "ally": ally_ids}
+
+        ds = DraftState(
+            ally_ids=ally_ids, enemy_ids=enemy_ids, banned_ids=banned,
+            my_pos=self.manual_pos,
+            unknown_slots=st.get("unknown_slots", 0),
+            confidence=st.get("confidence", 1.0),
+            source=st.get("source", "cv"),
         )
-        ov.bus.draft_update.emit({
+        recs = recommend_picks(ds, self.gd,
+                               bracket=self.cfg.get("mmr_bracket"))
+        self.ov.bus.draft_update.emit({
+            "phase": ds.phase_label,
+            "reliable": ds.reliable,
             "enemy_picks": st["enemy_picks"],
-            "unknown_slots": st.get("unknown_slots", []),
-            "top3": [
-                (
-                    rec.heroes[str(cid)]["name"].replace("npc_dota_hero_", ""),
-                    display_name(cid), score, why,
-                )
-                for cid, score, why in top
+            "ally_picks": st["ally_picks"],
+            "bans": st.get("bans", []),
+            "unknown_slots": ds.unknown_slots,
+            "confidence": ds.confidence,
+            "top": [
+                (self.icon_dir(r.hero_id), self.hero_disp(r.hero_id),
+                 r.score, r.why())
+                for r in recs
             ],
         })
 
-    watcher = DraftWatcher(on_change=on_picks,
-                           interval_ms=cfg.get("capture_interval_ms", 500))
-    watcher.start()
+    def recompute_draft(self):
+        if self.last_draft_state:
+            self.on_draft(self.last_draft_state)
 
-    last_draft = {"enemy_ids": [], "ally_ids": []}
-    _orig_on_picks = on_picks
+    # ---------- GSI ----------
 
-    def on_picks(st: dict):  # noqa: F811 — wrap to persist draft results
-        last_state[0] = st
-        _orig_on_picks(st)
-        last_draft["enemy_ids"] = [
-            rec.hero_id(n) for n in st["enemy_picks"] if rec.hero_id(n)]
-        last_draft["ally_ids"] = [
-            rec.hero_id(n) for n in st["ally_picks"] if rec.hero_id(n)]
+    def on_gsi(self, st):
+        side = self.manual_side or st.team
+        if side:
+            self.watcher.set_side(side)
+        if st.team and not self.manual_side:
+            self.ov.bus.side_detected.emit(st.team)
 
-    watcher.on_change = on_picks
-    last_items_key = [None]
-    last_state = [None]
-
-    def recompute():
-        if last_state[0]:
-            on_picks(last_state[0])
-
-    ov.bus.side_changed.connect(
-        lambda s: (manual_side.__setitem__(0, s),
-                   watcher.set_side(s), recompute()))
-    ov.bus.role_changed.connect(
-        lambda r: (manual_role.__setitem__(0, r or None), recompute()))
-
-    def on_gsi(st):
-        # manual side override wins; otherwise follow GSI team_name
-        side = manual_side[0] or st.team
-        watcher.set_side(side)
-        if st.team and manual_side[0] is None:
-            ov.bus.side_detected.emit(st.team)
-        # CV only where GSI is silent: in CM/lobby picks arrive via GSI
-        # draft.teamN blocks — skip screen scraping there; in AP the draft
-        # block is absent/stripped so CV stays on
         gsi_draft = bool(st.draft.get("team2") or st.draft.get("team3"))
-        watcher.enabled = st.in_draft and not gsi_draft
+        self.watcher.enabled = st.in_draft and not gsi_draft
 
-        # CM/lobby drafts come through GSI directly — feed the same pipeline
-        if st.in_draft and st.draft:
-            dp = st.draft_picks()
-            if dp["enemy"] or dp["home"]:
-                on_picks({
-                    "enemy_picks": [
-                        rec.heroes.get(str(i), {}).get("name", "")
-                        .replace("npc_dota_hero_", "")
-                        for i in dp["enemy"]
-                    ],
-                    "ally_picks": [
-                        rec.heroes.get(str(i), {}).get("name", "")
-                        .replace("npc_dota_hero_", "")
-                        for i in dp["home"]
-                    ],
-                    "enemy_roles": [],
-                    "my_role": None,
-                    "unknown_slots": [],
+        if st.in_draft:
+            if gsi_draft:
+                # CM/лобби: пики и баны приходят в GSI — CV не нужен
+                dp = st.draft_picks()
+                short = lambda i: self.gd.short_name(i)  # noqa: E731
+                self.on_draft({
+                    "enemy_picks": [short(i) for i in dp["enemy"]],
+                    "ally_picks": [short(i) for i in dp["home"]],
+                    "bans": [short(i) for i in
+                             dp["bans"]["enemy"] + dp["bans"]["home"]],
+                    "unknown_slots": 0, "confidence": 1.0, "source": "gsi",
                 })
             return
 
-        # in game -> item recommendations (recompute only on change)
-        if not st.in_draft and st.my_hero_id:
-            # spectator payloads carry all 10 heroes; own games don't —
-            # reuse what the draft watcher captured on the pick screen.
-            enemies = st.enemy_team_heroes() or last_draft["enemy_ids"]
+        # в игре -> предметы
+        if st.my_hero_id:
+            enemies = st.enemy_team_heroes() or self.last_draft_ids["enemy"]
+            owned = {
+                (v or {}).get("name", "").replace("item_", "")
+                for v in (st.items or {}).values() if isinstance(v, dict)
+            }
+            owned.discard("")
+            gold = int((st.raw.get("player") or {}).get("gold", 0))
             key = (st.my_hero_id, tuple(sorted(enemies)),
-                   st.clock_time // 60)
-            if key != last_items_key[0]:
-                last_items_key[0] = key
-                names = [
-                    rec.heroes.get(str(i), {}).get("name", "")
-                    .replace("npc_dota_hero_", "")
-                    for i in enemies
-                ]
-                gold = (st.raw.get("player") or {}).get("gold", 0)
-                items = rec.recommend_items(
-                    st.my_hero_id, names,
-                    gold=gold, clock_min=st.clock_time // 60)
-                ov.bus.items_update.emit({
-                    "hero": display_name(st.my_hero_id),
-                    "enemies": names,
-                    "items": items,
-                })
+                   tuple(sorted(owned)), st.clock_time // 30)
+            if key == self._items_key:
+                return
+            self._items_key = key
+            enemy_names = [self.gd.short_name(i) for i in enemies]
+            items = recommend_items(
+                st.my_hero_id, enemy_names, owned, gold,
+                max(st.clock_time, 0), self.gd)
+            self.ov.bus.items_update.emit({
+                "hero": self.hero_disp(st.my_hero_id),
+                "enemies": [self.hero_disp(i) for i in enemies],
+                "items": items,
+            })
 
-    gsi.on_update(on_gsi)
+    # ---------- run ----------
 
-    # global hotkey: Ctrl+Shift+D toggles click-through <-> interactive
-    if keyboard:
-        keyboard.add_hotkey(
-            "ctrl+shift+d",
-            lambda: ov.bus.toggle_interactive.emit())
-        ov.bus.status.emit("Ctrl+Shift+D — режим кликов")
-    else:
-        ov.bus.status.emit("pip install keyboard — для хоткея")
+    def run(self):
+        app, self.ov = run_overlay(self.cfg)
+        self.watcher = DraftWatcher(
+            on_change=self.on_draft,
+            interval_ms=self.cfg.get("capture_interval_ms", 500))
+        self.watcher.start()
+        gsi = start_gsi_thread(self.cfg["gsi_port"],
+                               self.cfg["gsi_auth_token"])
+        gsi.on_update(self.on_gsi)
 
-    sys.exit(app.exec())
+        self.ov.bus.side_changed.connect(self._side_changed)
+        self.ov.bus.pos_changed.connect(self._pos_changed)
+
+        if keyboard:
+            keyboard.add_hotkey(
+                "ctrl+shift+d",
+                lambda: self.ov.bus.toggle_interactive.emit())
+            self.ov.bus.status.emit("Ctrl+Shift+D — режим кликов")
+        else:
+            self.ov.bus.status.emit("pip install keyboard — для хоткея")
+
+        if self.gd.warnings:
+            self.ov.bus.status.emit(
+                f"данные: {len(self.gd.warnings)} предупреждений "
+                "(см. консоль)")
+            for w in self.gd.warnings:
+                print(f"[data] {w}")
+
+        sys.exit(app.exec())
+
+    def _side_changed(self, s: str):
+        self.manual_side = s
+        self.watcher.set_side(s)
+        self.recompute_draft()
+
+    def _pos_changed(self, pos: str):
+        self.manual_pos = int(pos) if pos else None
+        self.recompute_draft()
+
+
+def main():
+    Coordinator(load_config()).run()
 
 
 if __name__ == "__main__":

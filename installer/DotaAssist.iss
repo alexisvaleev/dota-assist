@@ -33,10 +33,10 @@ Name: "installgsi"; Description: "Установить GSI-конфиг в па�
 Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\gsi\gamestate_integration_dotaassist.cfg"; DestDir: "{app}\gsi"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
-; editable copies next to exe — override the bundled ones (see app/paths.py)
+; editable copy next to exe — overrides the bundled one (see app/paths.py)
 Source: "..\app\calibration.json"; DestDir: "{app}\app"; Flags: ignoreversion
-Source: "..\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc"
-Source: "..\config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+; data/ и config.json НЕ устанавливаем: данные скачиваются в %APPDATA%\DotaAssist,
+; иконки извлекаются из VPK на машине пользователя, config (токен) не таскаем.
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

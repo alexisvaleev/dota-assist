@@ -1,8 +1,10 @@
-"""OpenCV template matching: crop -> best hero/role match.
+"""OpenCV template matching: crop слота -> герой + уверенность.
 
-Templates come from data/icons/<hero_name>/*.png — every arcana/persona
-variant extracted from the VPK lives in the same folder, so any rendered
-variant has a template.
+Шаблоны: <user_dir>/data/icons/<hero_short_name>/*.png (все варианты
+аркан/персон из VPK). Resize шаблона под слот делается один раз и
+кэшируется — без этого 300+ ресайзов на слот каждые 500 мс.
+
+Ролей на экране Ranked AP нет — распознаём только героев и баны.
 """
 import json
 from pathlib import Path
@@ -10,69 +12,73 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from paths import resource_dir, resource
+from paths import layered_dir, layered_file
 
-ICONS = resource_dir("data/icons")
-
-ROLE_NAMES = ["carry", "mid", "offlane", "soft_support", "hard_support"]
+# иконки в appdata (extract_icons кладёт туда) либо рядом с репо/exe
+ICON_DIRS = [layered_dir("data/icons")]
 
 
 class Recognizer:
     def __init__(self):
         self.threshold = 0.82
-        self.hero_templates: dict[str, list[tuple[Path, np.ndarray]]] = {}
-        self.role_templates: dict[str, np.ndarray] = {}
+        self.hero_templates: dict[str, list[np.ndarray]] = {}
+        self._scaled: dict[tuple[int, int, int], np.ndarray] = {}
         self._load()
 
     def _load(self):
-        for hero_dir in ICONS.iterdir() if ICONS.exists() else []:
-            if not hero_dir.is_dir() or hero_dir.name == "roles":
+        for icons in ICON_DIRS:
+            if not icons.exists():
                 continue
-            tpls = []
-            for f in hero_dir.glob("*.png"):
-                img = cv2.imread(str(f))
-                if img is not None:
-                    tpls.append((f, img))
-            if tpls:
-                self.hero_templates[hero_dir.name] = tpls
-        roles_dir = ICONS / "roles"
-        if roles_dir.exists():
-            for name in ROLE_NAMES:
-                f = roles_dir / f"{name}.png"
-                if f.exists():
+            for hero_dir in icons.iterdir():
+                if not hero_dir.is_dir():
+                    continue
+                tpls = []
+                for f in hero_dir.glob("*.png"):
                     img = cv2.imread(str(f))
                     if img is not None:
-                        self.role_templates[name] = img
+                        tpls.append(img)
+                if tpls:
+                    self.hero_templates.setdefault(hero_dir.name,
+                                                   []).extend(tpls)
+            if self.hero_templates:
+                break          # не смешиваем слои: appdata > repo
 
-    @staticmethod
-    def _match(crop: np.ndarray, tpl: np.ndarray) -> float:
-        """Resize template to crop and score via normalized correlation."""
-        if crop.size == 0 or tpl.size == 0:
-            return 0.0
-        t = cv2.resize(tpl, (crop.shape[1], crop.shape[0]))
-        res = cv2.matchTemplate(crop, t, cv2.TM_CCOEFF_NORMED)
-        return float(res.max())
+    def _scaled_tpl(self, tpl: np.ndarray, w: int, h: int) -> np.ndarray:
+        key = (id(tpl), w, h)
+        s = self._scaled.get(key)
+        if s is None:
+            s = cv2.resize(tpl, (w, h))
+            if len(self._scaled) > 4000:      # страховка от роста памяти
+                self._scaled.clear()
+            self._scaled[key] = s
+        return s
 
     def hero(self, crop: np.ndarray) -> tuple[str | None, float]:
-        best_name, best_score = None, 0.0
-        for name, tpls in self.hero_templates.items():
-            for _, tpl in tpls:
-                s = self._match(crop, tpl)
-                if s > best_score:
-                    best_name, best_score = name, s
-        if best_score >= self.threshold:
-            return best_name, best_score
-        return None, best_score
+        """(short_name | None, best_score). None = слот не распознан."""
+        name, score, _margin = self.hero_top2(crop)
+        return name, score
 
-    def role(self, crop: np.ndarray) -> str | None:
-        best_name, best_score = None, 0.0
-        for name, tpl in self.role_templates.items():
-            s = self._match(crop, tpl)
-            if s > best_score:
-                best_name, best_score = name, s
-        return best_name if best_score >= 0.8 else None
+    def hero_top2(self, crop: np.ndarray) -> tuple[str | None, float, float]:
+        """(name, best, margin = best - second).
+        margin — запас уверенности: если второй кандидат рядом, распознаванию
+        доверять нельзя даже при высоком best."""
+        if crop.size == 0:
+            return None, 0.0, 0.0
+        h, w = crop.shape[:2]
+        best1, best2, name = 0.0, 0.0, None
+        for hn, tpls in self.hero_templates.items():
+            for tpl in tpls:
+                t = self._scaled_tpl(tpl, w, h)
+                s = float(cv2.matchTemplate(crop, t, cv2.TM_CCOEFF_NORMED)[0][0])
+                if s > best1:
+                    best1, best2, name = s, best1, hn
+                elif s > best2:
+                    best2 = s
+        if best1 >= self.threshold:
+            return name, best1, best1 - best2
+        return None, best1, best1 - best2
 
 
 def load_calibration() -> dict:
-    p = resource("app/calibration.json")
+    p = layered_file("app/calibration.json")
     return json.loads(p.read_text(encoding="utf-8"))

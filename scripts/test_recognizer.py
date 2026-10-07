@@ -1,17 +1,16 @@
-"""Offline accuracy test: run the recognizer over a saved draft screenshot
-and print what each slot matched, with scores.
+"""Офлайн-проверка распознавания: прогоняет recognizer по сохранённому
+скриншоту драфта и печатает, что совпало в каждом слоте, со score.
 
-  python scripts/test_recognizer.py [draft_screen.png] [--verbose]
+  python scripts/test_recognizer.py [draft_screen.png] [-v]
 
-Calibrate app/calibration.json first, and capture the screenshot via
-scripts/screenshot_for_calib.py while a draft screen is open.
+Сначала калибровка app/calibration.json (scripts/screenshot_for_calib.py).
+Критерий go/no-go из docs/findings.md: победитель ≥0.9, второй ≤0.75.
 """
 import argparse
 import sys
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
@@ -31,41 +30,34 @@ def main():
     rec = Recognizer()
     cal = load_calibration()
     rec.threshold = cal.get("match_threshold", 0.82)
-
     if not rec.hero_templates:
         sys.exit("data/icons пуст — сначала python scripts/extract_icons.py")
 
+    rw, rh = cal.get("resolution", list(img.shape[:2][::-1]))
+    sx, sy = img.shape[1] / rw, img.shape[0] / rh
     print(f"шаблонов: {sum(len(v) for v in rec.hero_templates.values())} "
-          f"героев: {len(rec.hero_templates)}\n")
+          f"героев: {len(rec.hero_templates)}  scale={sx:.2f}x{sy:.2f}\n")
 
-    for side in ("team_left", "team_right"):
+    good = total = 0
+    for side in ("team_left", "team_right", "bans"):
+        slots = cal.get(side)
+        if isinstance(slots, dict):
+            slots = slots.get("slots", [])
         print(f"== {side} ==")
-        for i, slot in enumerate(cal[side]["slots"]):
-            x, y, w, h = slot["portrait"]
-            if w == 0:
-                print(f"  слот {i}: не откалиброван")
+        for i, (x, y, w, h) in enumerate(slots):
+            if not w:
                 continue
-            crop = img[y:y + h, x:x + w]
-            name, score = rec.hero(crop)
-            mark = name or "?"
-            print(f"  слот {i}: {mark}  (score {score:.3f})")
-
-            if args.verbose:
-                # top-5 candidates across all templates for this crop
-                cand = []
-                for hn, tpls in rec.hero_templates.items():
-                    s = max(rec._match(crop, t) for _, t in tpls)
-                    cand.append((s, hn))
-                cand.sort(reverse=True)
-                for s, hn in cand[:5]:
-                    print(f"      {s:.3f}  {hn}")
-
-            rc = slot["role"]
-            x, y, w, h = rc
-            if w and rec.role_templates:
-                r = rec.role(img[y:y + h, x:x + w])
-                print(f"          роль: {r or '?'}")
+            total += 1
+            crop = img[int(y * sy):int((y + h) * sy),
+                       int(x * sx):int((x + w) * sx)]
+            name, score, margin = rec.hero_top2(crop)
+            if name:
+                good += 1
+            print(f"  слот {i}: {name or '?'}  score={score:.3f} "
+                  f"margin={margin:.3f}")
         print()
+    print(f"распознано {good}/{total}; критерий: score≥{rec.threshold}, "
+          f"margin≥{cal.get('min_margin', 0.06)}")
 
 
 if __name__ == "__main__":

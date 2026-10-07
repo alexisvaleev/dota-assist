@@ -1,4 +1,4 @@
-"""One-shot setup: GSI cfg + data fetch. Run once after cloning.
+"""Разработческий сетап: GSI cfg + данные + иконки. Один раз после клона.
 
   python scripts/setup.py            # все шаги
   python scripts/setup.py --gsi-only # только конфиг GSI
@@ -11,7 +11,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+sys.path.insert(0, str(ROOT / "app"))
+from paths import layered_file  # noqa: E402
+
+CFG = {}
+for p in (ROOT / "config.json", layered_file("config.example.json")):
+    if Path(p).exists():
+        CFG = json.loads(Path(p).read_text(encoding="utf-8"))
+        break
 
 
 def install_gsi():
@@ -25,7 +32,9 @@ def install_gsi():
 
 
 def fetch():
-    print("[data] загрузка OpenDota/STRATZ…")
+    print("[data] загрузка OpenDota/STRATZ ->", end=" ")
+    from paths import user_dir
+    print(user_dir() / "data")
     subprocess.run([sys.executable, str(ROOT / "scripts" / "fetch_data.py")],
                    check=True)
 

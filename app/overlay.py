@@ -1,12 +1,10 @@
-"""Frameless, translucent, always-on-top overlay window.
+"""Безрамочный полупрозрачный оверлей поверх Dota.
 
-Default mode is click-through (clicks pass to the game). A global hotkey
-toggles interactive mode, which reveals the control bar:
-  - side button      (Radiant <-> Dire manual override)
-  - position buttons (1..5 manual role override)
+По умолчанию — click-through (клики уходят в игру). Ctrl+Shift+D
+переключает в интерактивный режим: кнопки стороны и позиции 1-5,
+перетаскивание окна.
 """
 import sys
-from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QPixmap
@@ -15,25 +13,21 @@ from PyQt6.QtWidgets import (
     QPushButton, QButtonGroup,
 )
 
-from paths import resource_dir
+from paths import layered_dir
 
-ICONS = resource_dir("data/icons")
+ICONS = layered_dir("data/icons")
 
 POSITIONS = ["1", "2", "3", "4", "5"]
-POS_TO_ROLE = {
-    "1": "carry", "2": "mid", "3": "offlane",
-    "4": "soft_support", "5": "hard_support",
-}
 
 
 class Bus(QObject):
-    draft_update = pyqtSignal(dict)      # {enemy_picks, top3:[(name,score,why)]}
-    items_update = pyqtSignal(dict)      # {hero, items, enemies}
+    draft_update = pyqtSignal(dict)
+    items_update = pyqtSignal(dict)
     status = pyqtSignal(str)
     side_changed = pyqtSignal(str)       # "radiant" | "dire"
-    role_changed = pyqtSignal(str)       # role name or "" (auto)
-    side_detected = pyqtSignal(str)      # external auto-detect -> UI only
-    toggle_interactive = pyqtSignal()    # global hotkey lands here
+    pos_changed = pyqtSignal(str)        # "1".."5" | "" (авто)
+    side_detected = pyqtSignal(str)
+    toggle_interactive = pyqtSignal()
 
 
 class Overlay(QWidget):
@@ -52,7 +46,7 @@ class Overlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowOpacity(o.get("opacity", 0.85))
         self.setGeometry(o.get("x", 20), o.get("y", 200),
-                         o.get("width", 320), 10)
+                         o.get("width", 340), 10)
 
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(8, 8, 8, 8)
@@ -72,7 +66,7 @@ class Overlay(QWidget):
         self.status_lab.setStyleSheet("color:#777; font-size:10px;")
         self.lay.addWidget(self.status_lab)
 
-        # --- control bar (visible only in interactive mode) ---
+        # --- панель управления (только в интерактивном режиме) ---
         self.ctrl = QWidget()
         cl = QHBoxLayout(self.ctrl)
         cl.setContentsMargins(0, 0, 0, 0)
@@ -97,7 +91,7 @@ class Overlay(QWidget):
         cl.addStretch(1)
         self.ctrl.hide()
         self.lay.addWidget(self.ctrl)
-        # ----------------------------------------------------
+        # ---------------------------------------------------------
 
         self.body = QVBoxLayout()
         self.lay.addLayout(self.body)
@@ -110,7 +104,7 @@ class Overlay(QWidget):
         self.bus.toggle_interactive.connect(
             lambda: self.set_interactive(not self.interactive))
 
-    # ---------- modes ----------
+    # ---------- режимы ----------
 
     def set_interactive(self, on: bool):
         self.interactive = on
@@ -118,7 +112,7 @@ class Overlay(QWidget):
         flags = self._flags
         if not on:
             flags |= Qt.WindowType.WindowTransparentForInput
-        self.setWindowFlags(flags)   # resets window => needs show()
+        self.setWindowFlags(flags)
         self.show()
 
     def _side_toggled(self, checked: bool):
@@ -131,18 +125,17 @@ class Overlay(QWidget):
             for p, b in self.pos_btns.items():
                 if p != pos:
                     b.setChecked(False)
-            self.bus.role_changed.emit(POS_TO_ROLE[pos])
+            self.bus.pos_changed.emit(pos)
         elif not any(b.isChecked() for b in self.pos_btns.values()):
-            self.bus.role_changed.emit("")  # back to auto-detect
+            self.bus.pos_changed.emit("")     # сняли выбор — авто
 
     def set_side_display(self, side: str):
-        """Reflect externally-detected side without re-emitting."""
         self.side_btn.blockSignals(True)
         self.side_btn.setChecked(side == "dire")
         self.side_btn.setText("Dire" if side == "dire" else "Radiant")
         self.side_btn.blockSignals(False)
 
-    # ---------- drag (interactive mode only) ----------
+    # ---------- drag ----------
 
     def mousePressEvent(self, e):
         if self.interactive:
@@ -157,7 +150,7 @@ class Overlay(QWidget):
     def mouseReleaseEvent(self, e):
         self._drag_pos = None
 
-    # ---------- content ----------
+    # ---------- контент ----------
 
     def _clear(self):
         while self.body.count():
@@ -175,28 +168,55 @@ class Overlay(QWidget):
                 Qt.TransformationMode.SmoothTransformation)
             lab.setPixmap(pm)
         else:
-            lab.setText("?")
+            lab.setText(hero_dir[:3])
         return lab
 
     def show_draft(self, d: dict):
         self._clear()
-        self.title.setText("Драфт")
+        phase = d.get("phase", "Драфт")
+        conf = d.get("confidence", 1.0)
+        self.title.setText(f"Драфт — {phase}")
+
+        if not d.get("reliable", True):
+            warn = QLabel(
+                f"⚠ распознавание неточное "
+                f"(conf {conf:.2f}, нераспозн. слотов "
+                f"{d.get('unknown_slots', 0)}) — рекомендации примерные")
+            warn.setStyleSheet("color:#e80; font-size:10px;")
+            warn.setWordWrap(True)
+            self.body.addWidget(warn)
 
         row = QHBoxLayout()
         row.addWidget(QLabel("Враги:"))
         for name in d.get("enemy_picks", []):
             row.addWidget(self._icon_label(name, 36))
-        for _ in d.get("unknown_slots", []):
+        for _ in range(d.get("unknown_slots", 0)):
             row.addWidget(QLabel("[?]"))
         row.addStretch(1)
         self.body.addLayout(row)
 
+        bans = d.get("bans", [])
+        if bans:
+            row = QHBoxLayout()
+            row.addWidget(QLabel("Баны:"))
+            for name in bans[:12]:
+                ic = self._icon_label(name, 24)
+                ic.setStyleSheet("opacity:0.5;")
+                row.addWidget(ic)
+            row.addStretch(1)
+            self.body.addLayout(row)
+
         self.body.addWidget(QLabel("Топ пики:"))
-        for icon_name, disp, score, why in d.get("top3", []):
+        for icon_name, disp, score, why in d.get("top", []):
             h = QHBoxLayout()
             h.addWidget(self._icon_label(icon_name, 40))
-            v = QLabel(f"{disp}  <b>{score:.1f}</b>  <i>{why}</i>")
-            h.addWidget(v)
+            v = QLabel(f"{disp}  <b>{score:+.1f}</b>")
+            w = QLabel(f"<i>{why}</i>")
+            w.setStyleSheet("color:#9a9; font-size:10px;")
+            col = QVBoxLayout()
+            col.addWidget(v)
+            col.addWidget(w)
+            h.addLayout(col)
             h.addStretch(1)
             self.body.addLayout(h)
         self.adjustSize()
@@ -205,7 +225,14 @@ class Overlay(QWidget):
         self._clear()
         self.title.setText(f"Сборка — {d.get('hero', '')}")
         for it in d.get("items", []):
-            self.body.addWidget(QLabel("• " + it))
+            if isinstance(it, dict):
+                name = it["item"]
+                mark = "" if it.get("affordable", True) \
+                    else f"  (нужно ещё {it.get('need_gold', 0)}g)"
+                self.body.addWidget(
+                    QLabel(f"• {name} — {it.get('reason', '')}{mark}"))
+            else:
+                self.body.addWidget(QLabel("• " + str(it)))
         self.adjustSize()
 
 

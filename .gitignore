@@ -12,7 +12,11 @@ config.json
 data/heroes.json
 data/meta.json
 data/matchups.json
+data/synergies.json
+data/positions.json
 data/builds.json
+data/profile.json
 data/items_stratz_raw.json
 data/icons/
 draft_screen.png
+gsi_dumps/
