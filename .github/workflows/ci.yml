@@ -1,6 +1,9 @@
 name: ci
 on: [push, pull_request]
 
+env:
+  PYTHONIOENCODING: utf-8   # иначе кириллица в print падает на Windows-раннерах
+
 jobs:
   test:
     runs-on: ubuntu-latest
