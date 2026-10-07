@@ -18,6 +18,7 @@ from draft_watcher import DraftWatcher             # noqa: E402
 from overlay import run_overlay                    # noqa: E402
 from paths import layered_file, layered_dir, user_dir, config_file  # noqa: E402
 from engine import load_data, DraftState, recommend_picks, recommend_items  # noqa: E402
+from bootstrap import bootstrap_async              # noqa: E402
 
 try:
     import keyboard  # глобальные хоткеи (Windows)
@@ -46,17 +47,20 @@ def load_config() -> dict:
 class Coordinator:
     def __init__(self, cfg: dict):
         self.cfg = cfg
+        self.reload_data()
+        self.manual_pos: int | None = None   # 1..5 с кнопок
+        self.manual_side: str | None = None
+        self.last_draft_ids = {"enemy": [], "ally": []}
+        self.last_draft_state: dict | None = None
+        self._items_key = None
+
+    def reload_data(self):
         self.gd = load_data(data_dir=layered_dir("data"),
                             user_dir=user_dir() / "data")
         self.name2id = {
             v.get("name", "").replace("npc_dota_hero_", ""): hid
             for hid, v in self.gd.heroes.items()
         }
-        self.manual_pos: int | None = None   # 1..5 с кнопок
-        self.manual_side: str | None = None
-        self.last_draft_ids = {"enemy": [], "ally": []}
-        self.last_draft_state: dict | None = None
-        self._items_key = None
 
     # ---------- helpers ----------
 
@@ -187,6 +191,11 @@ class Coordinator:
                 "(см. консоль)")
             for w in self.gd.warnings:
                 print(f"[data] {w}")
+
+        # plug&play: при пустом кэше скачиваем данные и иконки сами
+        bootstrap_async(
+            status_cb=lambda m: self.ov.bus.status.emit(m),
+            on_done=lambda: (self.reload_data(), self.recompute_draft()))
 
         sys.exit(app.exec())
 

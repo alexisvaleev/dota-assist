@@ -35,11 +35,16 @@ def main():
     cfg = ensure_config()
     print(f"конфиг: {cfg}\n")
 
-    print("1/2  данные OpenDota/STRATZ…")
+    print("1/3  данные OpenDota/STRATZ…")
     subprocess.run([sys.executable,
                     str(ROOT / "scripts" / "fetch_data.py")], check=False)
 
-    print("2/2  иконки героев из VPK…")
+    print("2/3  иконки героев со Steam CDN…")
+    subprocess.run([sys.executable,
+                    str(ROOT / "scripts" / "fetch_icons_cdn.py")],
+                   check=False)
+
+    print("3/3  варианты иконок из VPK (арканы/персоны, опционально)…")
     try:
         subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "extract_icons.py")],
@@ -47,7 +52,7 @@ def main():
     except Exception as e:
         print(f"  пропущено: {e}\n"
               "  позже: python scripts/extract_icons.py "
-              "(нужен Source2Viewer-CLI)")
+              "(нужен Source2Viewer-CLI; базовых CDN-иконок уже хватает)")
 
     print("\nГотово. Запусти DotaAssist.exe; Dota должна быть в "
           "Borderless Windowed.")

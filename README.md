@@ -4,21 +4,29 @@
 + предметы в игре. Read-only: скриншоты экрана + официальный GSI.
 Никакого чтения памяти, инъекций или модификации игры.
 
-## Установка (Windows)
+## Установка (Windows, plug&play)
+
+**Готовый вариант:** релиз → `DotaAssist-Setup.exe` → установить →
+запустить. При первом старте приложение само скачает данные OpenDota и
+иконки героев в `%APPDATA%\DotaAssist\` — ждать ~5–10 мин один раз.
+
+**Из исходников:**
 
 ```bat
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy config.example.json config.json   :: вписать stratz_token / account_id
+copy config.example.json config.json   :: stratz_token / account_id (опц.)
 python scripts\setup.py
+python app\main.py
 ```
 
 `setup.py`: кладёт GSI-cfg в папку Dota, качает `data/*.json` в
-`%APPDATA%\DotaAssist\data` и извлекает иконки из VPK туда же.
+`%APPDATA%\DotaAssist\data`, иконки — со Steam CDN (VPK-экстрактор для
+вариантов аркан опционален).
 `config.json` не коммитится (в .gitignore), в exe не зашивается.
 
-**Вручную:**
+**Вручную один раз:**
 
 1. `-gamestateintegration` в параметры запуска Dota.
 2. **Borderless Windowed** — в exclusive fullscreen оверлей не виден.
@@ -26,15 +34,17 @@ python scripts\setup.py
    `python scripts\screenshot_for_calib.py` → по `draft_screen.png`
    замерить слоты `[x,y,w,h]` (team_left, team_right, bans),
    выставить `monitor` и `resolution`.
-4. Иконки: если авто-экстракция не сработала — `Source2Viewer-CLI`
-   (ValveResourceFormat), путь в `config.json -> vrf_cli`,
-   затем `python scripts\extract_icons.py`.
+4. Арканы/персоны врагов: `Source2Viewer-CLI`, путь в
+   `config.json -> vrf_cli`, затем `python scripts\extract_icons.py`.
 
-## Запуск
+## Релиз (CI)
 
 ```bat
-python app\main.py
+git tag v0.2.0 && git push --tags
 ```
+
+GitHub Actions соберёт `DotaAssist.exe` и `DotaAssist-Setup.exe` и
+выложит их в Release.
 
 - До матча — заглушка. В драфте — фаза, враги, баны, топ пиков с
   разбивкой (контр/синергия/пул/мета). В игре — предметы.
