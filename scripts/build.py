@@ -20,7 +20,7 @@ def main():
     sep = ";" if sys.platform == "win32" else ":"
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--noconfirm", "--windowed", "--clean",
+        "--noconfirm", "--windowed", "--clean", "--onefile",
         "--name", "DotaAssist",
         "--add-data", f"app/calibration.json{sep}app",
         "--add-data", f"data/items.json{sep}data",
