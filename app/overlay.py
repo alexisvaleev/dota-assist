@@ -5,6 +5,7 @@
 перетаскивание окна.
 """
 import sys
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QPixmap
@@ -15,7 +16,10 @@ from PyQt6.QtWidgets import (
 
 from paths import layered_dir
 
-ICONS = layered_dir("data/icons")
+
+def icons_dir() -> Path:
+    """Лениво: иконки могут докачаться bootstrap'ом уже после старта."""
+    return layered_dir("data/icons")
 
 POSITIONS = ["1", "2", "3", "4", "5"]
 
@@ -57,7 +61,8 @@ class Overlay(QWidget):
             "QLabel{font: 12px 'Segoe UI';}"
             "QPushButton{font:11px 'Segoe UI'; padding:2px 8px;"
             " background:#223; border:1px solid #445; border-radius:4px;}"
-            "QPushButton:checked{background:#3a6; color:#fff;}")
+            "QPushButton:checked{background:#2e8b57; color:#fff;"
+            " border:1px solid #8fd; font-weight:bold;}")
 
         self.title = QLabel("Dota Assist")
         self.title.setStyleSheet("font-weight:bold; color:#8cf;")
@@ -74,6 +79,7 @@ class Overlay(QWidget):
 
         self.side_btn = QPushButton("Radiant")
         self.side_btn.setCheckable(True)
+        self.side_btn.setMinimumWidth(74)
         self.side_btn.toggled.connect(self._side_toggled)
         cl.addWidget(self.side_btn)
 
@@ -166,7 +172,7 @@ class Overlay(QWidget):
 
     def _icon_label(self, hero_dir: str, size: int = 48) -> QLabel:
         lab = QLabel()
-        d = ICONS / hero_dir
+        d = icons_dir() / hero_dir
         png = next(d.glob("*.png"), None) if d.exists() else None
         if png:
             pm = QPixmap(str(png)).scaled(
@@ -222,6 +228,8 @@ class Overlay(QWidget):
             h = QHBoxLayout()
             h.addWidget(self._icon_label(icon_name, 40))
             v = QLabel(f"{disp}  <b>{score:+.1f}</b>")
+            v.setToolTip("Сумма слагаемых относительно нейтрали: "
+                         "мета(винрейт−50) + контрпик + синергия + твой пул")
             w = QLabel(f"<i>{why}</i>")
             w.setStyleSheet("color:#9a9; font-size:10px;")
             col = QVBoxLayout()
