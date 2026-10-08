@@ -51,6 +51,20 @@ def save(name: str, data, source: str, extra_meta: dict | None = None):
     print(f"  -> {name} ({source}, {len(data)} записей)")
 
 
+def stamp_fetched():
+    """Маркер свежести: data/_meta.json {"fetched_at": epoch}.
+    bootstrap.data_fresh() читает его, чтобы решить, не пора ли
+    перекачать кэш. Атомарно, как save()."""
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        tmp = DATA / "_meta.json.tmp"
+        tmp.write_text(json.dumps({"fetched_at": time.time()}),
+                       encoding="utf-8")
+        os.replace(tmp, DATA / "_meta.json")
+    except Exception as e:
+        print(f"  _meta.json: {e}")
+
+
 # ---------------- OpenDota ----------------
 
 def fetch_heroes(client: httpx.Client) -> dict:
@@ -291,6 +305,7 @@ def main(argv: list[str] | None = None):
         save("meta.json", fetch_meta(client), "opendota")
 
         if args.quick:
+            stamp_fetched()
             print("done (quick)")
             return
 
@@ -325,6 +340,7 @@ def main(argv: list[str] | None = None):
         else:
             print("  пропущено (нет account_id или профиль закрыт)")
 
+    stamp_fetched()
     print("done")
 
 

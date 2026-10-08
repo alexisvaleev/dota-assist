@@ -14,8 +14,13 @@ import numpy as np
 
 from paths import layered_dir, layered_file
 
-# иконки в appdata (extract_icons кладёт туда) либо рядом с репо/exe
-ICON_DIRS = [layered_dir("data/icons")]
+
+def icon_dirs() -> list[Path]:
+    """Лениво: иконки могут докачаться bootstrap'ом уже после импорта
+    модуля — резолвим слои при каждой загрузке шаблонов."""
+    # иконки в appdata (fetch_icons/extract_icons кладут туда) либо
+    # рядом с репо/exe
+    return [layered_dir("data/icons")]
 
 
 class Recognizer:
@@ -25,8 +30,16 @@ class Recognizer:
         self._scaled: dict[tuple[int, int, int], np.ndarray] = {}
         self._load()
 
+    def reload(self):
+        """Перечитать шаблоны с диска — после того как bootstrap докачал
+        иконки. Кадр за кадром шаблоны с диска не читаются: только явным
+        вызовом reload()."""
+        self.hero_templates.clear()
+        self._scaled.clear()          # ключи — id() старых шаблонов
+        self._load()
+
     def _load(self):
-        for icons in ICON_DIRS:
+        for icons in icon_dirs():
             if not icons.exists():
                 continue
             for hero_dir in icons.iterdir():
