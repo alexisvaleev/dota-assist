@@ -1,12 +1,10 @@
-"""Захват экрана во время драфта: читает слоты портретов и банов.
+"""Захват экрана во время драфта: слоты портретов и банов.
 
-Исправления v2:
-- монитор из calibration.monitor (по умолчанию 1, а не monitors[0] —
-  объединённый виртуальный экран съезжал при двух мониторах);
-- координаты масштабируются от calibration.resolution к реальному;
-- распознаём только героев (иконок ролей в Ranked AP нет);
-- передаём confidence (худший score) и margin — для решения «доверять ли»;
-- баны читаются из отдельного ряда слотов.
+v3:
+- область захвата = клиентская область окна Dota (wininfo), не весь монитор;
+  координаты калибровки — в пикселях этой области, resolution = её размер;
+- если слоты не откалиброваны (нули), авто-детект по контурам каждые ~2 с;
+- уверенность и «нераспознанные слоты» пробрасываются в оверлей.
 """
 import threading
 import time
@@ -16,6 +14,8 @@ import mss
 import numpy as np
 
 from recognizer import Recognizer, load_calibration
+import wininfo
+import autocalib
 
 
 def _crop(img: np.ndarray, box):
@@ -23,6 +23,11 @@ def _crop(img: np.ndarray, box):
     if w <= 0 or h <= 0:
         return img[0:0, 0:0]
     return img[y:y + h, x:x + w]
+
+
+def _empty_slots(cal: dict) -> bool:
+    slots = (cal.get("team_left") or {}).get("slots") or []
+    return not any(s[2] > 0 for s in slots)
 
 
 class DraftWatcher(threading.Thread):
@@ -42,6 +47,9 @@ class DraftWatcher(threading.Thread):
         self.state: dict = {}
         self._history: dict[tuple[str, int], list[str | None]] = {}
         self._stop_flag = threading.Event()
+        self._calib_next = 0.0          # когда пробовать автокалибровку
+        self.calib_status = ""          # текст для оверлея
+        self.force_calib = False        # ручной триггер из оверлея
 
     # ---------- helpers ----------
 
@@ -59,6 +67,20 @@ class DraftWatcher(threading.Thread):
         if team_name in ("radiant", "dire"):
             self.my_side = team_name
 
+    def _grab(self, sct) -> np.ndarray:
+        """Кадр игровой области: окно Dota, либо монитор из калибровки."""
+        rect = wininfo.dota_client_rect()
+        if rect:
+            x, y, w, h = rect
+            shot = sct.grab({"left": x, "top": y, "width": w,
+                             "height": h})
+        else:
+            mons = sct.monitors
+            mon = mons[self.monitor] if self.monitor < len(mons) \
+                else mons[1]
+            shot = sct.grab(mon)
+        return np.asarray(shot)[:, :, :3]
+
     def _scale(self, img_w: int, img_h: int):
         rw, rh = self.cal.get("resolution", [img_w, img_h])
         return img_w / max(rw, 1), img_h / max(rh, 1)
@@ -67,13 +89,10 @@ class DraftWatcher(threading.Thread):
         raw = self.cal.get(group)
         if isinstance(raw, dict):
             raw = raw.get("slots", [])
-        out = []
-        for x, y, w, h in raw or []:
-            out.append([int(x * sx), int(y * sy), int(w * sx), int(h * sy)])
-        return out
+        return [[int(x * sx), int(y * sy), int(w * sx), int(h * sy)]
+                for x, y, w, h in (raw or [])]
 
     def _read_slots(self, img, slots, key_prefix: str):
-        """-> (heroes, unknown_idx, min_score)"""
         heroes, unknown, worst = [], [], 1.0
         for i, box in enumerate(slots):
             crop = _crop(img, box)
@@ -85,19 +104,43 @@ class DraftWatcher(threading.Thread):
             if hero:
                 heroes.append(hero)
                 worst = min(worst, score)
-            elif crop.std() > 8:     # что-то отрисовано, но не узнали
+            elif crop.std() > 8:
                 heroes.append(None)
                 unknown.append(i)
             else:
                 heroes.append(None)
         return heroes, unknown, worst
 
+    # ---------- автокалибровка ----------
+
+    def _maybe_autocalib(self, img: np.ndarray):
+        if not (_empty_slots(self.cal) or self.force_calib):
+            return
+        if time.time() < self._calib_next:
+            return
+        self._calib_next = time.time() + 2.0
+        self.force_calib = False
+        cal = autocalib.auto_calibrate(img, monitor=self.monitor)
+        if not cal:
+            self.calib_status = "автокалибровка: слоты не найдены"
+            return
+        ok, total = autocalib.quality(self.rec, img, cal)
+        if total and ok < 2:
+            self.calib_status = (f"автокалибровка: {ok}/{total} "
+                                 "— слоты не похожи на пики")
+            return
+        p = autocalib.save_calibration(cal)
+        self.cal = cal
+        self.calib_status = f"автокалибровка ok ({ok}/{total}) -> {p.name}"
+
     # ---------- main loop ----------
 
     def _tick(self, sct):
-        mons = sct.monitors
-        mon = mons[self.monitor] if self.monitor < len(mons) else mons[1]
-        img = np.asarray(sct.grab(mon))[:, :, :3]
+        img = self._grab(sct)
+        if _empty_slots(self.cal) or self.force_calib:
+            self._maybe_autocalib(img)
+            if _empty_slots(self.cal):
+                return
         sx, sy = self._scale(img.shape[1], img.shape[0])
 
         radiant_key = "team_right" if self.cal.get("radiant_on_right") \
@@ -119,6 +162,7 @@ class DraftWatcher(threading.Thread):
             "bans": [b for b in bans if b],
             "unknown_slots": len(e_unk),
             "confidence": round(min(e_score, a_score), 3),
+            "calib": self.calib_status,
         }
         if new != self.state:
             self.state = new

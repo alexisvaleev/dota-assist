@@ -101,6 +101,7 @@ class Coordinator:
             "bans": st.get("bans", []),
             "unknown_slots": ds.unknown_slots,
             "confidence": ds.confidence,
+            "calib": st.get("calib", ""),
             "top": [
                 (self.icon_dir(r.hero_id), self.hero_disp(r.hero_id),
                  r.score, r.why())
@@ -176,6 +177,8 @@ class Coordinator:
 
         self.ov.bus.side_changed.connect(self._side_changed)
         self.ov.bus.pos_changed.connect(self._pos_changed)
+        self.ov.bus.calibrate.connect(
+            lambda: setattr(self.watcher, "force_calib", True))
 
         if keyboard:
             keyboard.add_hotkey(

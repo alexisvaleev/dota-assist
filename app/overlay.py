@@ -28,6 +28,7 @@ class Bus(QObject):
     pos_changed = pyqtSignal(str)        # "1".."5" | "" (авто)
     side_detected = pyqtSignal(str)
     toggle_interactive = pyqtSignal()
+    calibrate = pyqtSignal()             # принудительная авто-калибровка
 
 
 class Overlay(QWidget):
@@ -88,6 +89,11 @@ class Overlay(QWidget):
             self.pos_group.addButton(b)
             self.pos_btns[p] = b
             cl.addWidget(b)
+
+        self.calib_btn = QPushButton("Калиб.")
+        self.calib_btn.setToolTip("Авто-детект слотов драфта на экране")
+        self.calib_btn.clicked.connect(lambda: self.bus.calibrate.emit())
+        cl.addWidget(self.calib_btn)
         cl.addStretch(1)
         self.ctrl.hide()
         self.lay.addWidget(self.ctrl)
@@ -176,6 +182,11 @@ class Overlay(QWidget):
         phase = d.get("phase", "Драфт")
         conf = d.get("confidence", 1.0)
         self.title.setText(f"Драфт — {phase}")
+
+        if d.get("calib"):
+            c = QLabel(d["calib"])
+            c.setStyleSheet("color:#7ad; font-size:10px;")
+            self.body.addWidget(c)
 
         if not d.get("reliable", True):
             warn = QLabel(

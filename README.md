@@ -30,19 +30,22 @@ Game State Integration. Никакого чтения памяти, инъекц
 
 ### Калибровка
 
-Слоты портретов — это прямоугольники `[x,y,w,h]` в
-`app\calibration.json` рядом с exe (переопределяет встроенную) или в
-`%APPDATA%\DotaAssist\app\calibration.json`:
+Обычно **ничего делать не надо**: при старте драфта приложение само
+находит окно Dota, определяет монитор и детектит слоты по контурам
+(результат сохраняется в `%APPDATA%\DotaAssist\app\calibration.json`).
+В интерактивном режиме есть кнопка «Калиб.» — принудительный перезапуск.
+
+Если авто-детект не справился (кастомный HUD/масштаб):
 
 ```bat
-:: на открытом экране драфта (лобби/демо):
-python scripts\screenshot_for_calib.py   :: -> draft_screen.png
-:: в Paint замерь 5 слотов каждой команды + ряд банов,
-:: впиши в calibration.json, выстави monitor и resolution
-python scripts\test_recognizer.py draft_screen.png -v  :: проверка точности
+python scripts\screenshot_for_calib.py   :: снимок области окна Dota
+:: замерь в Paint слоты [x,y,w,h]: team_left, team_right (по 5), bans
+:: впиши в calibration.json + resolution
+python scripts\test_recognizer.py draft_screen.png -v  :: точность
 ```
 
-Координаты масштабируются автоматически при другом разрешении.
+Координаты — в пикселях клиентской области окна; при другом разрешении
+масштабируются автоматически.
 
 ## Как считаются рекомендации
 
