@@ -26,18 +26,28 @@ def find_iscc() -> str | None:
     return None
 
 
+def git_version() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=ROOT, text=True).strip().lstrip("v")
+    except Exception:
+        return "0.0.0"
+
+
 def main():
     # 1. exe
     subprocess.run([sys.executable, str(ROOT / "scripts" / "build.py")],
                    check=True)
 
-    # 2. installer
+    # 2. installer — версия из git-тега (iscc /D переопределяет #define)
     iscc = find_iscc()
     if not iscc:
         sys.exit("Inno Setup не найден — поставь https://jrsoftware.org/isinfo.php "
                  "и перезапусти")
     iss = ROOT / "installer" / "DotaAssist.iss"
-    subprocess.run([iscc, str(iss)], cwd=ROOT, check=True)
+    subprocess.run([iscc, f"/DAppVersion={git_version()}", str(iss)],
+                   cwd=ROOT, check=True)
     print("\nГотово: installer\\Output\\DotaAssist-Setup.exe")
 
 

@@ -8,17 +8,22 @@
 """
 import json
 import sys
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 
+from PyQt6.QtCore import QTimer                    # noqa: E402
+from PyQt6.QtWidgets import QApplication           # noqa: E402
 from gsi_server import start_gsi_thread            # noqa: E402
 from draft_watcher import DraftWatcher             # noqa: E402
 from overlay import run_overlay                    # noqa: E402
 from paths import layered_file, layered_dir, user_dir, config_file  # noqa: E402
 from engine import load_data, DraftState, recommend_picks, recommend_items  # noqa: E402
 from bootstrap import bootstrap_async              # noqa: E402
+import updater                                     # noqa: E402
+from version import current as app_version         # noqa: E402
 
 try:
     import keyboard  # глобальные хоткеи (Windows)
@@ -53,6 +58,7 @@ class Coordinator:
         self.last_draft_ids = {"enemy": [], "ally": []}
         self.last_draft_state: dict | None = None
         self._items_key = None
+        self._update_info: dict | None = None
 
     def reload_data(self):
         self.gd = load_data(data_dir=layered_dir("data"),
@@ -179,6 +185,7 @@ class Coordinator:
         self.ov.bus.pos_changed.connect(self._pos_changed)
         self.ov.bus.calibrate.connect(
             lambda: setattr(self.watcher, "force_calib", True))
+        self.ov.bus.update_requested.connect(self._apply_update)
 
         if keyboard:
             keyboard.add_hotkey(
@@ -200,7 +207,29 @@ class Coordinator:
             status_cb=lambda m: self.ov.bus.status.emit(m),
             on_done=lambda: (self.reload_data(), self.recompute_draft()))
 
+        # автообновление: раз в запуск смотрим свежий релиз на GitHub
+        print(f"[version] {app_version()}")
+        updater.check_async(self._update_found)
+
         sys.exit(app.exec())
+
+    def _apply_update(self):
+        if not self._update_info:
+            return
+        url = self._update_info["url"]
+
+        def work():
+            if updater.apply_update(
+                    url, lambda m: self.ov.bus.status.emit(m)):
+                self.watcher.stop()
+                QTimer.singleShot(0, QApplication.instance().quit)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_found(self, info: dict | None):
+        if info:
+            self._update_info = info
+            self.ov.bus.update_found.emit(info)
 
     def _side_changed(self, s: str):
         self.manual_side = s

@@ -3,7 +3,9 @@
 ; Output: installer\Output\DotaAssist-Setup.exe
 
 #define AppName "Dota Assist"
-#define AppVersion "0.1.0"
+#ifndef AppVersion
+#define AppVersion "0.0.0"
+#endif
 #define AppExe "DotaAssist.exe"
 
 [Setup]

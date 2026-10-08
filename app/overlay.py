@@ -33,6 +33,8 @@ class Bus(QObject):
     side_detected = pyqtSignal(str)
     toggle_interactive = pyqtSignal()
     calibrate = pyqtSignal()             # принудительная авто-калибровка
+    update_found = pyqtSignal(dict)      # {"tag", "url", ...}
+    update_requested = pyqtSignal()      # пользователь согласился обновиться
 
 
 class Overlay(QWidget):
@@ -52,6 +54,8 @@ class Overlay(QWidget):
         self.setWindowOpacity(o.get("opacity", 0.85))
         self.setGeometry(o.get("x", 20), o.get("y", 200),
                          o.get("width", 340), 10)
+
+        self.bus = Bus()
 
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(8, 8, 8, 8)
@@ -83,6 +87,11 @@ class Overlay(QWidget):
         self.side_btn.toggled.connect(self._side_toggled)
         cl.addWidget(self.side_btn)
 
+        self.update_btn = QPushButton()
+        self.update_btn.hide()
+        self.update_btn.clicked.connect(self.bus.update_requested)
+        cl.addWidget(self.update_btn)
+
         cl.addWidget(QLabel("Поз:"))
         self.pos_group = QButtonGroup(self)
         self.pos_group.setExclusive(False)
@@ -108,13 +117,13 @@ class Overlay(QWidget):
         self.body = QVBoxLayout()
         self.lay.addLayout(self.body)
 
-        self.bus = Bus()
         self.bus.draft_update.connect(self.show_draft)
         self.bus.items_update.connect(self.show_items)
         self.bus.status.connect(self.status_lab.setText)
         self.bus.side_detected.connect(self.set_side_display)
         self.bus.toggle_interactive.connect(
             lambda: self.set_interactive(not self.interactive))
+        self.bus.update_found.connect(self._update_found)
 
     # ---------- режимы ----------
 
@@ -140,6 +149,14 @@ class Overlay(QWidget):
             self.bus.pos_changed.emit(pos)
         elif not any(b.isChecked() for b in self.pos_btns.values()):
             self.bus.pos_changed.emit("")     # сняли выбор — авто
+
+    def _update_found(self, info: dict):
+        tag = info.get("tag", "")
+        self.update_btn.setText(f"⟳ {tag}")
+        self.update_btn.setToolTip("Скачать и установить обновление")
+        self.update_btn.show()
+        self.status_lab.setText(f"доступно обновление {tag}")
+        self.adjustSize()
 
     def set_side_display(self, side: str):
         self.side_btn.blockSignals(True)
