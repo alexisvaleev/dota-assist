@@ -35,6 +35,9 @@ class Bus(QObject):
     calibrate = pyqtSignal()             # принудительная авто-калибровка
     update_found = pyqtSignal(dict)      # {"tag", "url", ...}
     update_requested = pyqtSignal()      # пользователь согласился обновиться
+    quit_app = pyqtSignal()              # обновление готово -> выход+подмена
+    draft_raw = pyqtSignal(dict)         # снимок драфта из watcher-потока
+    gsi_raw = pyqtSignal(object)         # GSI-состояние из Flask-потока
 
 
 class Overlay(QWidget):
@@ -181,11 +184,17 @@ class Overlay(QWidget):
 
     # ---------- контент ----------
 
-    def _clear(self):
-        while self.body.count():
-            w = self.body.takeAt(0).widget()
-            if w:
-                w.deleteLater()
+    def _clear(self, lay: QVBoxLayout | None = None):
+        # takeAt на вложенном QHBoxLayout отдаёт layout, а не widget —
+        # без рекурсии его виджеты остаются детьми окна и наползают
+        # на следующий show_draft.
+        lay = lay or self.body
+        while lay.count():
+            it = lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+            elif it.layout():
+                self._clear(it.layout())
 
     def _icon_label(self, hero_dir: str, size: int = 48) -> QLabel:
         lab = QLabel()
@@ -220,6 +229,11 @@ class Overlay(QWidget):
             warn.setWordWrap(True)
             self.body.addWidget(warn)
 
+        for w_text in d.get("warnings") or []:
+            w = QLabel(f"⚠ {w_text}")
+            w.setStyleSheet("color:#e80; font-size:10px;")
+            self.body.addWidget(w)
+
         row = QHBoxLayout()
         row.addWidget(QLabel("Враги:"))
         for name in d.get("enemy_picks", []):
@@ -246,7 +260,8 @@ class Overlay(QWidget):
             h.addWidget(self._icon_label(icon_name, 40))
             v = QLabel(f"{disp}  <b>{score:+.1f}</b>")
             v.setToolTip("Сумма слагаемых относительно нейтрали: "
-                         "мета(винрейт−50) + контрпик + синергия + твой пул")
+                         "мета(винрейт−50) + контрпик + синергия "
+                         "+ твой пул + состав")
             w = QLabel(f"<i>{why}</i>")
             w.setStyleSheet("color:#9a9; font-size:10px;")
             col = QVBoxLayout()
