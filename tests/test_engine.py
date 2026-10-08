@@ -12,6 +12,7 @@ from engine.dataload import load_data          # noqa: E402
 from engine.models import DraftState            # noqa: E402
 from engine.scoring import recommend_picks      # noqa: E402
 from engine.items import recommend_items        # noqa: E402
+from engine.composition import team_gaps        # noqa: E402
 
 
 def write(d: Path, name: str, obj):
@@ -19,7 +20,7 @@ def write(d: Path, name: str, obj):
 
 
 def make_data(tmp: Path, **kw) -> Path:
-    write(tmp, "heroes.json", {"data": {
+    write(tmp, "heroes.json", {"data": kw.get("heroes", {
         "1": {"name": "npc_dota_hero_aa", "localized_name": "AA",
               "roles": ["Support"]},
         "2": {"name": "npc_dota_hero_bb", "localized_name": "BB",
@@ -30,7 +31,7 @@ def make_data(tmp: Path, **kw) -> Path:
               "roles": ["Support"]},
         "5": {"name": "npc_dota_hero_ee", "localized_name": "EE",
               "roles": ["Mid"]},
-    }})
+    })})
     write(tmp, "meta.json", {"data": kw.get("meta", {
         "1": {"wr_all": 50, "wr_bracket": {}, "picks": 100},
         "2": {"wr_all": 55, "wr_bracket": {}, "picks": 100},
@@ -200,6 +201,71 @@ class Scoring(unittest.TestCase):
         top = recommend_picks(st, gd, top=10)
         cc = next(r for r in top if r.hero_id == 3)
         self.assertGreater(cc.breakdown["with"], 0)
+
+
+class Composition(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self.td.name)
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_roles_loaded(self):
+        make_data(self.tmp, heroes={
+            "1": {"name": "x", "localized_name": "X",
+                  "roles": ["Initiator"], "attack_type": "Melee"}})
+        gd = load_data(self.tmp)
+        self.assertEqual(gd.roles[1], ["Initiator"])
+        self.assertEqual(gd.attack_type[1], "Melee")
+
+    def test_no_allies_no_warnings(self):
+        make_data(self.tmp)
+        gd = load_data(self.tmp)
+        self.assertEqual(team_gaps([], gd), [])
+
+    def test_missing_roles_warned(self):
+        """Один саппорт в команде: закрыт только его тег."""
+        make_data(self.tmp)
+        gd = load_data(self.tmp)
+        gaps = team_gaps([1], gd)
+        self.assertIn("нет инициации", gaps)
+        self.assertIn("нет контроля", gaps)
+        self.assertIn("нет фронтлайна", gaps)
+        self.assertTrue(any("маг" in g for g in gaps))
+        self.assertNotIn("нет саппорта", gaps)
+
+    def test_balanced_team_no_warnings(self):
+        make_data(self.tmp, heroes={
+            str(i): {"name": f"h{i}", "localized_name": f"H{i}",
+                     "roles": [role]}
+            for i, role in enumerate(
+                ["Initiator", "Disabler", "Durable", "Support", "Nuker"],
+                start=1)})
+        gd = load_data(self.tmp)
+        self.assertEqual(team_gaps([1, 2, 3, 4, 5], gd), [])
+
+    def test_gap_filler_scores_higher(self):
+        """Равные по мете кандидаты: закрывающий пробел выше."""
+        make_data(self.tmp, heroes={
+            "1": {"name": "s", "localized_name": "Sup",
+                  "roles": ["Support"]},
+            "2": {"name": "i", "localized_name": "Ini",
+                  "roles": ["Initiator"]},
+            "3": {"name": "c", "localized_name": "Car",
+                  "roles": ["Carry"]},
+            "4": {"name": "f", "localized_name": "Flex",
+                  "roles": ["Initiator", "Disabler", "Durable", "Nuker"]},
+        }, meta={str(i): {"wr_all": 52, "wr_bracket": {}, "picks": 100}
+                 for i in range(1, 5)})
+        gd = load_data(self.tmp)
+        top = recommend_picks(DraftState(ally_ids=[1]), gd, top=10)
+        by_id = {r.hero_id: r for r in top}
+        self.assertAlmostEqual(by_id[2].breakdown["comp"], 0.8)
+        self.assertEqual(by_id[3].breakdown["comp"], 0)
+        self.assertGreater(by_id[2].score, by_id[3].score)
+        self.assertIn("состав", by_id[2].why())
+        self.assertAlmostEqual(by_id[4].breakdown["comp"], 1.5)  # cap
 
 
 class Items(unittest.TestCase):

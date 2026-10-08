@@ -30,6 +30,9 @@ def _unwrap(raw) -> tuple[dict, dict]:
 @dataclass
 class GameData:
     heroes: dict[int, dict] = field(default_factory=dict)
+    # roles[hid] = ["Carry", ...], attack_type[hid] = "Melee" | "Ranged"
+    roles: dict[int, list[str]] = field(default_factory=dict)
+    attack_type: dict[int, str] = field(default_factory=dict)
     meta: dict[int, dict] = field(default_factory=dict)
     # matchups[a][b] = {games:int, wins:int, wr:float} — wr побед a против b
     matchups: dict[int, dict[int, dict]] = field(default_factory=dict)
@@ -110,11 +113,17 @@ def load_data(data_dir: Path, user_dir: Path | None = None) -> GameData:
 
     gd = GameData(warnings=warnings)
 
-    for i, (k, v) in enumerate(_unwrap(pick("heroes.json"))[0].items()):
+    for k, v in _unwrap(pick("heroes.json"))[0].items():
         try:
-            gd.heroes[int(k)] = v
+            hid = int(k)
         except (TypeError, ValueError):
             warnings.append(f"heroes.json: плохой id {k!r}")
+            continue
+        gd.heroes[hid] = v
+        if isinstance(v, dict):
+            gd.roles[hid] = [str(r) for r in v.get("roles") or []]
+            if v.get("attack_type"):
+                gd.attack_type[hid] = str(v["attack_type"])
 
     for k, v in _unwrap(pick("meta.json"))[0].items():
         try:

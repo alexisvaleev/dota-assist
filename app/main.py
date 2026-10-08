@@ -21,6 +21,7 @@ from draft_watcher import DraftWatcher             # noqa: E402
 from overlay import run_overlay                    # noqa: E402
 from paths import layered_file, layered_dir, user_dir, config_file  # noqa: E402
 from engine import load_data, DraftState, recommend_picks, recommend_items  # noqa: E402
+from engine import team_gaps                                               # noqa: E402
 from bootstrap import bootstrap_async              # noqa: E402
 import updater                                     # noqa: E402
 from version import current as app_version         # noqa: E402
@@ -108,6 +109,7 @@ class Coordinator:
             "unknown_slots": ds.unknown_slots,
             "confidence": ds.confidence,
             "calib": st.get("calib", ""),
+            "warnings": team_gaps(ally_ids, self.gd),
             "top": [
                 (self.icon_dir(r.hero_id), self.hero_disp(r.hero_id),
                  r.score, r.why())
@@ -174,13 +176,18 @@ class Coordinator:
     def run(self):
         app, self.ov = run_overlay(self.cfg)
         self.watcher = DraftWatcher(
-            on_change=self.on_draft,
+            on_change=self.ov.bus.draft_raw.emit,
             interval_ms=self.cfg.get("capture_interval_ms", 500))
         self.watcher.start()
         gsi = start_gsi_thread(self.cfg["gsi_port"],
                                self.cfg["gsi_auth_token"])
-        gsi.on_update(self.on_gsi)
+        gsi.on_update(self.ov.bus.gsi_raw.emit)
 
+        # всё, что меняет состояние, исполняется в GUI-потоке через
+        # queued-сигналы: CV/Flask потоки только эмитят, не мутируют
+        self.ov.bus.draft_raw.connect(self.on_draft)
+        self.ov.bus.gsi_raw.connect(self.on_gsi)
+        self.ov.bus.quit_app.connect(app.quit)
         self.ov.bus.side_changed.connect(self._side_changed)
         self.ov.bus.pos_changed.connect(self._pos_changed)
         self.ov.bus.calibrate.connect(
@@ -202,10 +209,10 @@ class Coordinator:
             for w in self.gd.warnings:
                 print(f"[data] {w}")
 
-        # plug&play: при пустом кэше скачиваем данные и иконки сами
+        # plug&play: при пустом/протухшем кэше скачиваем данные и иконки
         bootstrap_async(
             status_cb=lambda m: self.ov.bus.status.emit(m),
-            on_done=lambda: (self.reload_data(), self.recompute_draft()))
+            on_done=self._data_ready)
 
         # автообновление: раз в запуск смотрим свежий релиз на GitHub
         print(f"[version] {app_version()}")
@@ -213,16 +220,24 @@ class Coordinator:
 
         sys.exit(app.exec())
 
+    def _data_ready(self):
+        """bootstrap закончил: перечитать данные и шаблоны иконок."""
+        self.reload_data()
+        self.watcher.rec.reload()
+        self.recompute_draft()
+
     def _apply_update(self):
         if not self._update_info:
             return
-        url = self._update_info["url"]
 
         def work():
+            # dict целиком: внутри url/size/checksums_url для верификации
             if updater.apply_update(
-                    url, lambda m: self.ov.bus.status.emit(m)):
+                    self._update_info,
+                    lambda m: self.ov.bus.status.emit(m)):
                 self.watcher.stop()
-                QTimer.singleShot(0, QApplication.instance().quit)
+                # выход в GUI-потоке: из worker-треда QTimer не сработает
+                self.ov.bus.quit_app.emit()
 
         threading.Thread(target=work, daemon=True).start()
 

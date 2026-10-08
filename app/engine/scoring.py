@@ -4,6 +4,7 @@ score = w_meta·(wr_base−50)
       + Σ_enemy w_lane·adv(cand, e)
       + w_syn·Σ_ally syn(cand, a)
       + w_pool·pool_bonus(cand)
+      + min(w_comp·|закрытые_пробелы|, comp_cap)
 
 adv = (wr(cand vs e) − wr_base(cand)) · n/(n+K)   — сжатие по числу игр:
 4 победы в 4 играх ≠ +50, а почти ноль.
@@ -11,6 +12,7 @@ w_lane > 1 если враг вероятно стоит против меня �
 """
 from __future__ import annotations
 
+from .composition import hero_tags, needs
 from .dataload import GameData
 from .models import DraftState, Recommendation, LANE_OPPONENTS
 
@@ -21,6 +23,8 @@ SYN_W = 0.6
 POOL_W = 0.5            # макс. бонус за личный пул (в очках)
 POOL_GAMES_FULL = 25    # сколько игр на герое = полное доверие
 MIN_POS_SHARE = 0.08    # герой играет мою позицию реже 8% -> не кандидат
+COMP_W = 0.8            # бонус за каждую закрытую функцию команды
+COMP_CAP = 1.5          # макс. бонус за состав (в очках)
 
 
 def base_wr(gd: GameData, hid: int, bracket: int | None = None) -> float:
@@ -81,6 +85,7 @@ def recommend_picks(
 ) -> list[Recommendation]:
     taken = set(st.enemy_ids) | set(st.ally_ids) | set(st.banned_ids)
     filter_pos = bool(st.my_pos) and has_pos_data(gd)
+    need = needs(st.ally_ids, gd)
 
     out: list[Recommendation] = []
     for cid in gd.heroes:
@@ -96,11 +101,13 @@ def recommend_picks(
                  for e in st.enemy_ids)
         syn = SYN_W * sum(_syn(gd, cid, a, b_c) for a in st.ally_ids)
         pool = POOL_W * _pool_bonus(gd, cid, b_c)
+        comp = min(COMP_W * len(need & hero_tags(gd, cid)), COMP_CAP)
 
         out.append(Recommendation(
             hero_id=cid,
-            score=meta + vs + syn + pool,
-            breakdown={"meta": meta, "vs": vs, "with": syn, "pool": pool},
+            score=meta + vs + syn + pool + comp,
+            breakdown={"meta": meta, "vs": vs, "with": syn,
+                       "pool": pool, "comp": comp},
         ))
 
     out.sort(key=lambda r: r.score, reverse=True)

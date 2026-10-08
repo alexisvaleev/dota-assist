@@ -52,7 +52,7 @@ class Recommendation:
     hero_id: int
     score: float
     breakdown: dict[str, float] = field(default_factory=dict)
-    # breakdown: {"meta": .., "vs": .., "with": .., "pool": ..}
+    # breakdown: {"meta", "vs", "with", "pool", "comp"}
 
     def why(self) -> str:
         parts = []
@@ -63,6 +63,8 @@ class Recommendation:
             parts.append(f"синергия {b['with']:+.1f}")
         if b.get("pool"):
             parts.append(f"твой пул {b['pool']:+.1f}")
+        if b.get("comp"):
+            parts.append(f"состав {b['comp']:+.1f}")
         if not parts:
             return f"мета {b.get('meta', 0):+.1f}"
         return " · ".join(parts)
