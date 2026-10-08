@@ -93,17 +93,27 @@ class DraftWatcher(threading.Thread):
                 for x, y, w, h in (raw or [])]
 
     def _read_slots(self, img, slots, key_prefix: str):
-        heroes, unknown, worst = [], [], 1.0
+        """-> (heroes, unknown_idx, worst_score | None).
+
+        Герой принимается, только если score >= threshold (проверяет
+        hero_top2) И margin >= self.min_margin. Высокий score при
+        малом margin — два похожих кандидата (варианты аркан): лучшему
+        не доверяем, слот считается нераспознанным.
+        """
+        heroes, unknown = [], []
+        worst: float | None = None      # min score по распознанным
         for i, box in enumerate(slots):
             crop = _crop(img, box)
             if crop.size == 0:
                 heroes.append(None)
                 continue
-            hero, score = self.rec.hero(crop)
-            hero = self._stable((key_prefix, i), hero)
+            name, score, margin = self.rec.hero_top2(crop)
+            if name is not None and margin < self.min_margin:
+                name = None             # score ок, но второй кандидат рядом
+            hero = self._stable((key_prefix, i), name)
             if hero:
                 heroes.append(hero)
-                worst = min(worst, score)
+                worst = score if worst is None else min(worst, score)
             elif crop.std() > 8:
                 heroes.append(None)
                 unknown.append(i)
@@ -156,12 +166,22 @@ class DraftWatcher(threading.Thread):
         bans, _, _ = self._read_slots(
             img, self._slots("bans", sx, sy), "b")
 
+        # Честная confidence: min score по распознанным слотам, уменьшенный
+        # пропорционально доле «занятых, но не распознанных» слотов.
+        # Ничего не распознано -> 0.0 (а не 1.0, как при старте с 1.0).
+        recognized = sum(1 for h in e + a if h)
+        occupied = recognized + len(e_unk) + len(a_unk)
+        scores = [s for s in (e_score, a_score) if s is not None]
+        conf = min(scores) if scores else 0.0
+        if occupied:
+            conf *= recognized / occupied
+
         new = {
             "enemy_picks": [h for h in e if h],
             "ally_picks": [h for h in a if h],
             "bans": [b for b in bans if b],
-            "unknown_slots": len(e_unk),
-            "confidence": round(min(e_score, a_score), 3),
+            "unknown_slots": len(e_unk) + len(a_unk),
+            "confidence": round(conf, 3),
             "calib": self.calib_status,
         }
         if new != self.state:
