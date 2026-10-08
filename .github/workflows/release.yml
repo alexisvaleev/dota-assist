@@ -25,9 +25,19 @@ jobs:
         run: choco install innosetup -y --no-progress
       - name: Build exe + installer
         run: python scripts/build_release.py
+      - name: SHA256 checksums
+        run: |
+          $files = @("dist/DotaAssist.exe", "installer/Output/DotaAssist-Setup.exe")
+          $out = foreach ($f in $files) {
+            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            "$h  $(Split-Path $f -Leaf)"
+          }
+          $out -join "`n" | Out-File -Encoding ascii dist/checksums.txt
+          Get-Content dist/checksums.txt
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/DotaAssist.exe
+            dist/checksums.txt
             installer/Output/DotaAssist-Setup.exe
