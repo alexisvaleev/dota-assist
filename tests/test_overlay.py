@@ -38,7 +38,7 @@ DRAFT = {
 }
 
 
-def _widgets(root: QWidget) -> list[QWidget]:
+def _widgets(root):
     return root.findChildren(QWidget)
 
 
