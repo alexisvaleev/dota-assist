@@ -33,8 +33,10 @@ def main():
         sys.exit("heroes.json не найден — сначала scripts/fetch_data.py")
 
     ok = skip = fail = 0
+    total = len(heroes)
     with httpx.Client(timeout=30, follow_redirects=True) as c:
-        for hid, h in heroes.items():
+        for i, (hid, h) in enumerate(heroes.items()):
+            print(f"  icons {i + 1}/{total}", flush=True)
             short = h["name"].replace("npc_dota_hero_", "")
             d = icons / short
             if d.exists() and any(d.glob("*.png")):

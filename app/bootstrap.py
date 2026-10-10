@@ -13,6 +13,8 @@ REFRESH_DAYS суток перекачиваются при запуске. Ик
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import threading
 import time
@@ -105,6 +107,37 @@ def data_fresh(now: float | None = None) -> bool:
     return any(_is_fresh(d, now) for d in _data_dirs())
 
 
+def data_full() -> bool:
+    """Полный датасет докачан (маркер _meta.json {"full": true}).
+    Маркеры старых версий без ключа считаем полными — их писал только
+    полный прогон fetch_data; --quick прогон пишет "full": false."""
+    try:
+        raw = json.loads((user_dir() / "data" / _META_FILE)
+                         .read_text(encoding="utf-8"))
+        return bool(raw.get("full", True))
+    except Exception:
+        return False
+
+
+class _Progress(io.TextIOBase):
+    """stdout прогресса fetch_* -> status_cb.
+
+    В windowed-сборке print уходит в никуда: без перенаправления
+    статус висит на «скачиваю данные…» все ~10 минут полного фетча."""
+    def __init__(self, cb: Callable[[str], None] | None):
+        self._cb = cb
+
+    def write(self, s: str) -> int:
+        if self._cb:
+            for line in s.splitlines():
+                if line.strip():
+                    self._cb(line.strip())
+        return len(s)
+
+    def flush(self):
+        pass
+
+
 def icons_ready(icons_dir: Path | None = None) -> bool:
     """data/icons цел: >= ICON_MIN_HEROES папок героев с png внутри.
 
@@ -122,25 +155,43 @@ def icons_ready(icons_dir: Path | None = None) -> bool:
 
 def bootstrap(status_cb: Callable[[str], None] | None = None,
               on_done: Callable[[], None] | None = None):
-    """Качает данные (нет или протухли) и иконки (не докачаны).
-    Запускать в треде — сеть блокирующая."""
+    """Качает данные (нет/протухли/неполные) и иконки (не докачаны).
+    Запускать в треде — сеть блокирующая.
+
+    Первый запуск двухстадийный: --quick (heroes+meta за секунды) ->
+    on_done -> полный фетч с прогрессом в статус-строке. Обрыв полного
+    фетча не зацикливает закачку: _meta.full=false, следующий запуск
+    докачивает только остаток."""
     def say(msg: str):
         print(f"[bootstrap] {msg}")
         if status_cb:
             status_cb(msg)
 
-    fresh = data_fresh()
-    if fresh and icons_ready():
-        if on_done:
+    def done():
+        if not on_done:
+            return
+        try:
             on_done()
+        except Exception as e:
+            say(f"перезагрузка данных: {e}")
+
+    fresh = data_fresh()
+    if fresh and data_full() and icons_ready():
+        done()
         return
 
-    if not fresh:
-        say("Первый запуск: скачиваю данные…" if not data_ready()
-            else "Данные устарели — обновляю…")
+    if not fresh or not data_full():
         try:
             import fetch_data
-            fetch_data.main([])
+            if not data_ready():
+                say("Первый запуск: скачиваю базу героев…")
+                with contextlib.redirect_stdout(_Progress(status_cb)):
+                    fetch_data.main(["--quick"])
+                done()      # heroes+meta уже дают рабочие рекомендации
+            say("Докачиваю статистику — первый раз несколько минут…"
+                if data_fresh() else "Данные устарели — обновляю…")
+            with contextlib.redirect_stdout(_Progress(status_cb)):
+                fetch_data.main([])
         except Exception as e:
             say(f"данные: ошибка ({e}) — повторится при следующем запуске")
             if not data_ready():
@@ -148,18 +199,19 @@ def bootstrap(status_cb: Callable[[str], None] | None = None,
             # иначе живём на старом кэше — иконки всё равно проверим
         else:
             say("Данные обновлены")
+            done()
 
     if not icons_ready():
         try:
             import fetch_icons
             say("Качаю иконки героев…")
-            fetch_icons.main()      # sys.exit, если heroes.json так и нет
+            with contextlib.redirect_stdout(_Progress(status_cb)):
+                fetch_icons.main()  # sys.exit, если heroes.json так и нет
         except (Exception, SystemExit) as e:
             say(f"иконки: {e} (не критично)")
 
-    say("Готово")
-    if on_done:
-        on_done()
+    say("Готово — запускайте игру")
+    done()
 
 
 def bootstrap_async(status_cb: Callable[[str], None] | None = None,

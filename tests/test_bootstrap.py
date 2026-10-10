@@ -253,13 +253,33 @@ class BootstrapFlow(EnvHome):
             self.run_boot()
         self.assertEqual(self.calls["data"], [[]])
         self.assertEqual(self.calls["icons"], 0)
-        self.assertEqual(self.calls["done"], 1)
+        self.assertGreaterEqual(self.calls["done"], 1)
 
     def test_missing_data_and_icons_fetched(self):
+        # первый запуск: --quick (heroes+meta), затем полный фетч
         self.run_boot()                             # пустой tmp
-        self.assertEqual(self.calls["data"], [[]])
+        self.assertEqual(self.calls["data"], [["--quick"], []])
         self.assertEqual(self.calls["icons"], 1)
-        self.assertEqual(self.calls["done"], 1)
+        self.assertGreaterEqual(self.calls["done"], 1)
+
+    def test_partial_fetch_resumed(self):
+        # кэш свеж, но прошлый фетч оборвался на полном этапе —
+        # докачиваем только полный, --quick не нужен
+        d = self.tmp / "data"
+        core_files(d)
+        write_json(d, "_meta.json",
+                   {"fetched_at": time.time(), "full": False})
+        self.run_boot()
+        self.assertEqual(self.calls["data"], [[]])
+
+    def test_done_exception_nonfatal(self):
+        self._fresh_data()
+        def boom():
+            raise RuntimeError("gui died")
+        with mock.patch.dict(sys.modules, self.mods):
+            bootstrap.bootstrap(status_cb=lambda m: None, on_done=boom)
+        # не упали — дошли до конца
+        self.assertEqual(self.calls["icons"], 1)
 
     def test_fresh_data_but_missing_icons(self):
         # баг: раньше иконки качались только вместе с данными
