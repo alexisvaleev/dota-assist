@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "app"))
 
 from PyQt6.QtCore import QTimer                    # noqa: E402
 from PyQt6.QtWidgets import QApplication           # noqa: E402
-from gsi_server import start_gsi_thread            # noqa: E402
+from gsi_server import start_gsi_thread, draft_cv_needed  # noqa: E402
 from draft_watcher import DraftWatcher             # noqa: E402
 from overlay import run_overlay                    # noqa: E402
 from paths import layered_file, layered_dir, user_dir, config_file  # noqa: E402
@@ -59,6 +59,7 @@ class Coordinator:
         self.last_draft_ids = {"enemy": [], "ally": []}
         self.last_draft_state: dict | None = None
         self._items_key = None
+        self._match_id: str | None = None
         self._update_info: dict | None = None
 
     def reload_data(self):
@@ -123,7 +124,23 @@ class Coordinator:
 
     # ---------- GSI ----------
 
+    def _reset_match(self):
+        """Смена матча или выход в меню: прошлая катка не должна висеть
+        в оверлее (герой/пики/предметы) и портить первый кадр нового
+        драфта своей историей стабилизации."""
+        self.last_draft_state = None
+        self.last_draft_ids = {"enemy": [], "ally": []}
+        self._items_key = None
+        self.watcher.reset()
+        self.ov.bus.draft_update.emit({})
+        self.ov.bus.items_update.emit({})
+
     def on_gsi(self, st):
+        mid = str(st.match_id or 0)
+        if mid != self._match_id:
+            self._match_id = mid
+            self._reset_match()
+
         side = self.manual_side or st.team
         if side:
             self.watcher.set_side(side)
@@ -131,7 +148,7 @@ class Coordinator:
             self.ov.bus.side_detected.emit(st.team)
 
         gsi_draft = bool(st.draft.get("team2") or st.draft.get("team3"))
-        self.watcher.enabled = st.in_draft and not gsi_draft
+        self.watcher.enabled = draft_cv_needed(st)
 
         if st.in_draft:
             if gsi_draft:
@@ -256,7 +273,39 @@ class Coordinator:
         self.recompute_draft()
 
 
+_LOCK_FH = None
+
+
+def _acquire_single_instance() -> bool:
+    """Один экземпляр: lock-файл в user_dir. Второй процесс отобрал бы
+    GSI-порт у первого (или умер без GSI), и оба показывали бы свой
+    оверлей — классический источник «на пиках не работает»."""
+    global _LOCK_FH
+    try:
+        p = user_dir() / "dotaassist.lock"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fh = p.open("a+b")
+        if sys.platform == "win32":
+            import msvcrt
+            fh.seek(0)
+            if not fh.read(1):
+                fh.write(b"0")
+            fh.flush()
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    _LOCK_FH = fh                      # держим handle — держим lock
+    return True
+
+
 def main():
+    if not _acquire_single_instance():
+        print("[dota-assist] уже запущен — второй экземпляр не нужен")
+        return
     Coordinator(load_config()).run()
 
 

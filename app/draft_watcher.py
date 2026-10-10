@@ -42,7 +42,9 @@ class DraftWatcher(threading.Thread):
         self.min_margin = self.cal.get("min_margin", 0.06)
         self.monitor = int(self.cal.get("monitor", 1))
 
-        self.enabled = False
+        # без GSI CV — единственный источник драфта: стартуем включённым;
+        # on_gsi выключает на состояниях, где драфта заведомо нет
+        self.enabled = True
         self.my_side = "radiant"        # Radiant слева; override из main
         self.state: dict = {}
         self._history: dict[tuple[str, int], list[str | None]] = {}
@@ -66,6 +68,12 @@ class DraftWatcher(threading.Thread):
     def set_side(self, team_name: str):
         if team_name in ("radiant", "dire"):
             self.my_side = team_name
+
+    def reset(self):
+        """Между играми: забыть голоса стабилизации и прошлый снимок,
+        иначе первый кадр нового драфта сравнивается со старым."""
+        self._history.clear()
+        self.state = {}
 
     def _grab(self, sct) -> np.ndarray:
         """Кадр игровой области: окно Dota, либо монитор из калибровки."""

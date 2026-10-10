@@ -16,6 +16,33 @@ DRAFT_STATES = {
     "DOTA_GAMERULES_STATE_TEAM_SHOWCASE",
 }
 
+# состояния, где драфта заведомо нет — CV можно не гонять
+_NO_DRAFT_STATES = {
+    "DOTA_GAMERULES_STATE_INIT",
+    "DOTA_GAMERULES_STATE_WAIT_FOR_PLAYERS_TO_LOAD",
+    "DOTA_GAMERULES_STATE_PRE_GAME",
+    "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS",
+    "DOTA_GAMERULES_STATE_POST_GAME",
+    "DOTA_GAMERULES_STATE_DISCONNECT",
+}
+
+
+def draft_cv_needed(st: "GameState") -> bool:
+    """True — CV-вотчер должен работать (fail-open).
+
+    False только когда GSI доказал «драфта нет» либо когда он сам
+    отдаёт пики (CM/лобби — там CV не нужен). GSI мёртв или молчит —
+    функция не вызывается, watcher.enabled держит дефолт True: экран
+    остаётся единственным источником драфта.
+    """
+    if st.draft.get("team2") or st.draft.get("team3"):
+        return False
+    if st.game_state in _NO_DRAFT_STATES:
+        return False
+    if not st.game_state and not st.my_hero_id and not st.team:
+        return False            # главное меню — нечего распознавать
+    return True
+
 
 class GameState:
     """Parsed view over one GSI payload."""
@@ -110,7 +137,11 @@ class GsiServer:
         # Quiet flask logging
         import logging
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
-        self.app.run(host="127.0.0.1", port=self.port, threaded=True)
+        try:
+            self.app.run(host="127.0.0.1", port=self.port, threaded=True)
+        except OSError as e:
+            # порт занят вторым экземпляром — живём без GSI (CV работает)
+            print(f"[gsi] порт {self.port}: {e} — GSI отключён")
 
 
 def start_gsi_thread(port: int, token: str) -> GsiServer:

@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 
-from gsi_server import GameState, GsiServer      # noqa: E402
+from gsi_server import GameState, GsiServer, draft_cv_needed  # noqa: E402
 
 
 RANKED_DRAFT = {
@@ -65,6 +65,35 @@ class Parse(unittest.TestCase):
         st = GameState(IN_GAME)
         self.assertEqual(st.clock_time, 1250)
         self.assertEqual(st.raw["player"]["gold"], 3200)
+
+
+class CvGate(unittest.TestCase):
+    """draft_cv_needed: CV гоняем, пока GSI не доказал «драфта нет»."""
+
+    def test_ranked_draft_needs_cv(self):
+        self.assertTrue(draft_cv_needed(GameState(RANKED_DRAFT)))
+
+    def test_gsi_supplied_draft_disables_cv(self):
+        self.assertFalse(draft_cv_needed(GameState(CM_DRAFT)))
+
+    def test_in_game_off(self):
+        self.assertFalse(draft_cv_needed(GameState(IN_GAME)))
+
+    def test_menu_off(self):
+        # пустой payload: ни state, ни героя, ни команды — меню
+        self.assertFalse(draft_cv_needed(GameState({})))
+
+    def test_postgame_off(self):
+        st = GameState({"map": {"game_state":
+                                "DOTA_GAMERULES_STATE_POST_GAME"}})
+        self.assertFalse(draft_cv_needed(st))
+
+    def test_unknown_state_fail_open(self):
+        # неизвестное состояние — лучше лишний раз снять экран,
+        # чем промолчать на реальном драфте
+        st = GameState({"map": {"game_state": "DOTA_GAMERULES_STATE_FUTURE"},
+                        "player": {"team_name": "dire"}})
+        self.assertTrue(draft_cv_needed(st))
 
 
 class Endpoint(unittest.TestCase):
